@@ -1,7 +1,3 @@
-
-
-
-
 import datetime as dt
 
 import pandas as pd
@@ -37,11 +33,16 @@ user_id = name_by_id[person_name]
 activity = get_user_activity(user_id, start_date, end_date)
 completed = get_tasks_completed_in_range(user_id, start_date, end_date)
 created_count = len([a for a in activity if a["action"] == "created"])
+hours_logged = sum(
+    float(a["new_value"]) for a in activity
+    if a["action"] == "logged_hours" and a.get("new_value")
+)
 
-m1, m2, m3 = st.columns(3)
+m1, m2, m3, m4 = st.columns(4)
 m1.metric("Activity events", len(activity))
 m2.metric("Tasks completed", len(completed))
 m3.metric("Tasks created", created_count)
+m4.metric("Hours logged", f"{hours_logged:g}")
 
 if not activity:
     st.info(f"No activity for {person_name} between {start_date} and {end_date}.")
