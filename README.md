@@ -1,4 +1,4 @@
-# Jira-lite
+# Mustard
 
 A lightweight, Jira-inspired project & task tracker: **Streamlit** frontend,
 **Supabase** (Postgres + Auth) backend.
