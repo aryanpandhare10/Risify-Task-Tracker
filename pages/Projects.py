@@ -69,10 +69,11 @@ with tab_tasks:
         with st.form("new_task"):
             title = st.text_input("Title")
             desc = st.text_area("Description")
-            c1, c2, c3 = st.columns(3)
+            c1, c2, c3, c4 = st.columns(4)
             issue_type = c1.selectbox("Type", utils.ISSUE_TYPE_ROOT_OPTIONS)
             priority = c2.selectbox("Priority", utils.PRIORITY_OPTIONS, index=2)
             assignee_name = c3.selectbox("Assignee", ["Unassigned"] + list(profile_map.keys()))
+            est_hours = c4.number_input("Estimated hours", min_value=0.0, step=0.5, value=0.0)
             due = st.date_input("Due date", value=None)
             submitted_task = st.form_submit_button("Create task")
         if submitted_task:
@@ -83,6 +84,7 @@ with tab_tasks:
                 create_task(
                     project_id, title, desc, issue_type, priority, assignee_id,
                     profile["id"], due_date=str(due) if due else None,
+                    estimated_hours=est_hours if est_hours > 0 else None,
                 )
                 st.success("Task created.")
                 st.rerun()
@@ -103,6 +105,8 @@ with tab_tasks:
 
             with st.expander("Details, sub-tasks & comments"):
                 st.write(t.get("description") or "_No description_")
+                if t.get("estimated_hours"):
+                    st.caption(f"Estimated: {t['estimated_hours']} hrs")
 
                 cols = st.columns([2, 2, 1])
                 new_status = cols[0].selectbox(
