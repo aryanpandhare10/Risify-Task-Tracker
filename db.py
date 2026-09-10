@@ -137,6 +137,7 @@ def create_task(
     reporter_id: str,
     due_date: Optional[str] = None,
     parent_id: Optional[str] = None,
+    estimated_hours: Optional[float] = None,
 ) -> dict:
     sb = get_client()
     payload = {
@@ -150,6 +151,7 @@ def create_task(
         "updated_by": reporter_id,
         "due_date": due_date,
         "parent_id": parent_id,
+        "estimated_hours": estimated_hours,
     }
     res = sb.table("tasks").insert(payload).execute()
     return res.data[0]
@@ -160,6 +162,51 @@ def update_task(task_id: str, updated_by: str, **fields) -> dict:
     fields["updated_by"] = updated_by
     res = sb.table("tasks").update(fields).eq("id", task_id).execute()
     return res.data[0]
+
+
+def update_task_estimate(task_id: str, updated_by: str, new_estimate: float, justification: str) -> dict:
+    """Changing the hours estimate always requires a justification, which is
+    recorded on the task_activity row the database trigger creates."""
+    return update_task(
+        task_id, updated_by,
+        estimated_hours=new_estimate,
+        last_change_note=justification.strip(),
+    )
+
+
+# ---------------------------------------------------------------
+# Time logs (actual hours worked)
+# ---------------------------------------------------------------
+def log_time(task_id: str, user_id: str, hours: float, note: str = "",
+             log_date: Optional[str] = None) -> dict:
+    sb = get_client()
+    payload = {
+        "task_id": task_id,
+        "user_id": user_id,
+        "hours": hours,
+        "note": note or None,
+    }
+    if log_date:
+        payload["log_date"] = log_date
+    res = sb.table("time_logs").insert(payload).execute()
+    return res.data[0]
+
+
+def list_time_logs(task_id: str) -> list:
+    sb = get_client()
+    return (
+        sb.table("time_logs")
+        .select("*, profiles(full_name)")
+        .eq("task_id", task_id)
+        .order("log_date", desc=True)
+        .execute()
+        .data
+    )
+
+
+def get_total_logged_hours(task_id: str) -> float:
+    logs = list_time_logs(task_id)
+    return sum(float(l["hours"]) for l in logs)
 
 
 # ---------------------------------------------------------------
