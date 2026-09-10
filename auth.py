@@ -63,7 +63,16 @@ def require_login() -> dict:
     if "user" not in st.session_state:
         login_form()
         st.stop()
-    return st.session_state["profile"]
+    profile = st.session_state.get("profile")
+    if profile is None:
+        st.error(
+            "You're signed in, but no profile record was found for this "
+            "account. Ask an admin to add a row for you in the `profiles` "
+            "table (id must match your auth.users id)."
+        )
+        logout_button()
+        st.stop()
+    return profile
 
 
 def logout_button() -> None:
