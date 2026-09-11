@@ -122,36 +122,34 @@ if is_admin:
 
             st.caption("All tasks in this project")
 
-            fcol1, fcol2, fcol3 = st.columns(3)
-            status_filter = fcol1.multiselect(
-                "Filter by status", utils.STATUS_OPTIONS,
-                default=utils.STATUS_OPTIONS,
+            status_filter = utils.checkbox_filter(
+                st, "Filter by status", utils.STATUS_OPTIONS,
+                key_prefix=f"status_filter_{p['id']}",
                 format_func=lambda s: utils.STATUS_LABELS.get(s, s),
-                key=f"status_filter_{p['id']}",
             )
             assignee_choices = sorted({
                 id_to_name.get(t.get("assignee_id"), "Unassigned") for t in root_tasks
             })
-            assignee_filter = fcol2.multiselect(
-                "Filter by assigned to", assignee_choices,
-                default=assignee_choices,
-                key=f"assignee_filter_{p['id']}",
+            assignee_filter = utils.checkbox_filter(
+                st, "Filter by assigned to", assignee_choices,
+                key_prefix=f"assignee_filter_{p['id']}",
             )
-            due_sort = fcol3.selectbox(
-                "Sort by due date", ["None", "Ascending", "Descending"],
-                key=f"due_sort_{p['id']}",
-            )
+
+            st.caption("Filter by due date range")
+            dcol1, dcol2 = st.columns(2)
+            due_from = dcol1.date_input("From", value=None, key=f"due_from_{p['id']}")
+            due_to = dcol2.date_input("To", value=None, key=f"due_to_{p['id']}")
 
             filtered_roots = [
                 t for t in root_tasks
                 if t["status"] in status_filter
                 and id_to_name.get(t.get("assignee_id"), "Unassigned") in assignee_filter
             ]
-            if due_sort != "None":
-                dated = [t for t in filtered_roots if t.get("due_date")]
-                undated = [t for t in filtered_roots if not t.get("due_date")]
-                dated.sort(key=lambda t: t["due_date"], reverse=(due_sort == "Descending"))
-                filtered_roots = dated + undated
+            if due_from and due_to:
+                filtered_roots = [
+                    t for t in filtered_roots
+                    if t.get("due_date") and due_from.isoformat() <= t["due_date"] <= due_to.isoformat()
+                ]
 
             if not filtered_roots:
                 st.caption("No tasks match the filters.")
@@ -171,13 +169,16 @@ if is_admin:
                 total_est = own_est + sub_est
                 total_logged = own_logged + sub_logged
 
-                desc = t.get("description") or "—"
-                if len(desc) > 60:
-                    desc = desc[:57] + "..."
+                full_desc = t.get("description") or "—"
 
                 row = st.columns([2, 3, 2, 1.5, 1.5, 1.5])
                 row[0].write(t["title"])
-                row[1].write(desc)
+                with row[1]:
+                    if len(full_desc) > 40:
+                        with st.popover(full_desc[:37] + "..."):
+                            st.write(full_desc)
+                    else:
+                        st.write(full_desc)
                 row[2].write(id_to_name.get(t.get("assignee_id"), "Unassigned"))
                 row[3].write(utils.STATUS_LABELS.get(t["status"], t["status"]))
                 row[4].write(t.get("due_date") or "—")
