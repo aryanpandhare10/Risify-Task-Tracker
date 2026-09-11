@@ -28,7 +28,7 @@ st.subheader("Recent projects")
 if not projects:
     st.info("No projects yet. Open **Projects** in the sidebar to create one.")
 else:
-    for p in projects[:5]:
+    for p in projects[:500]:
         with st.container(border=True):
             st.markdown(f"**{p['key']}** — {p['name']}")
             st.caption(p.get("description") or "No description")
