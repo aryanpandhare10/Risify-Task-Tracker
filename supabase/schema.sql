@@ -55,6 +55,7 @@ create table if not exists tasks (
   updated_by    uuid references profiles(id),        -- app sets this on every write; triggers use it as "actor"
   due_date      date,
   estimate_hours numeric not null default 0 check (estimate_hours >= 0),
+  logged_hours  numeric not null default 0 check (logged_hours >= 0),
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now(),
   completed_at  timestamptz
@@ -219,3 +220,7 @@ create policy "comments_all" on comments for all to authenticated using (true) w
 alter table tasks add column if not exists estimate_hours numeric not null default 0;
 alter table tasks drop constraint if exists tasks_estimate_hours_check;
 alter table tasks add constraint tasks_estimate_hours_check check (estimate_hours >= 0);
+
+alter table tasks add column if not exists logged_hours numeric not null default 0;
+alter table tasks drop constraint if exists tasks_logged_hours_check;
+alter table tasks add constraint tasks_logged_hours_check check (logged_hours >= 0);
