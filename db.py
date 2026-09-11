@@ -173,6 +173,12 @@ def log_hours(task_id: str, updated_by: str, logged_hours: float) -> dict:
     return update_task(task_id, updated_by, logged_hours=logged_hours)
 
 
+def delete_task(task_id: str) -> None:
+    """Delete a task. Sub-tasks, comments and activity log rows cascade via FK."""
+    sb = get_client()
+    sb.table("tasks").delete().eq("id", task_id).execute()
+
+
 # ---------------------------------------------------------------
 # Comments
 # ---------------------------------------------------------------
