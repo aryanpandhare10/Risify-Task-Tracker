@@ -34,6 +34,19 @@ def name_to_id_map(profiles: list) -> dict:
     return {p["full_name"]: p["id"] for p in profiles}
 
 
+def checkbox_filter(st, label: str, options: list, key_prefix: str, format_func=None, per_row: int = 4) -> list:
+    """Render `options` as a row of plain checkboxes (all checked by default)
+    instead of a multiselect's colored tag pills. Returns the checked options."""
+    st.caption(label)
+    selected = []
+    cols = st.columns(min(per_row, len(options)) or 1)
+    for i, opt in enumerate(options):
+        text = format_func(opt) if format_func else str(opt)
+        if cols[i % len(cols)].checkbox(text, value=True, key=f"{key_prefix}_{opt}"):
+            selected.append(opt)
+    return selected
+
+
 def project_progress(tasks: list) -> dict:
     """Aggregate progress for one project's tasks (flat list, subtasks included).
 
