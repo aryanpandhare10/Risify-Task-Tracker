@@ -99,7 +99,15 @@ if is_admin:
         proj_tasks = tasks_by_project[p["id"]]
         if not proj_tasks:
             continue
-        with st.expander(f"{p['key']} — {p['name']} ({len(proj_tasks)} task(s))"):
+
+        root_tasks = [t for t in proj_tasks if not t.get("parent_id")]
+        subtasks_by_parent: dict = {}
+        for t in proj_tasks:
+            pid = t.get("parent_id")
+            if pid:
+                subtasks_by_parent.setdefault(pid, []).append(t)
+
+        with st.expander(f"{p['key']} — {p['name']} ({len(root_tasks)} task(s))"):
             person_rows = utils.per_assignee_progress(proj_tasks, id_to_name)
             person_df = pd.DataFrame([{
                 "Person": r["name"],
@@ -113,15 +121,79 @@ if is_admin:
             st.dataframe(person_df, use_container_width=True, hide_index=True)
 
             st.caption("All tasks in this project")
-            task_df = pd.DataFrame([{
-                "Key": t["task_key"],
-                "Title": t["title"],
-                "Assignee": id_to_name.get(t.get("assignee_id"), "Unassigned"),
-                "Status": utils.STATUS_LABELS.get(t["status"], t["status"]),
-                "Est. hours": t.get("estimate_hours") or 0,
-                "Logged hours": t.get("logged_hours") or 0,
-            } for t in sorted(proj_tasks, key=lambda t: id_to_name.get(t.get("assignee_id"), "Unassigned"))])
-            st.dataframe(task_df, use_container_width=True, hide_index=True)
+
+            fcol1, fcol2, fcol3 = st.columns(3)
+            status_filter = fcol1.multiselect(
+                "Filter by status", utils.STATUS_OPTIONS,
+                default=utils.STATUS_OPTIONS,
+                format_func=lambda s: utils.STATUS_LABELS.get(s, s),
+                key=f"status_filter_{p['id']}",
+            )
+            assignee_choices = sorted({
+                id_to_name.get(t.get("assignee_id"), "Unassigned") for t in root_tasks
+            })
+            assignee_filter = fcol2.multiselect(
+                "Filter by assigned to", assignee_choices,
+                default=assignee_choices,
+                key=f"assignee_filter_{p['id']}",
+            )
+            due_sort = fcol3.selectbox(
+                "Sort by due date", ["None", "Ascending", "Descending"],
+                key=f"due_sort_{p['id']}",
+            )
+
+            filtered_roots = [
+                t for t in root_tasks
+                if t["status"] in status_filter
+                and id_to_name.get(t.get("assignee_id"), "Unassigned") in assignee_filter
+            ]
+            if due_sort != "None":
+                dated = [t for t in filtered_roots if t.get("due_date")]
+                undated = [t for t in filtered_roots if not t.get("due_date")]
+                dated.sort(key=lambda t: t["due_date"], reverse=(due_sort == "Descending"))
+                filtered_roots = dated + undated
+
+            if not filtered_roots:
+                st.caption("No tasks match the filters.")
+
+            header = st.columns([2, 3, 2, 1.5, 1.5, 1.5])
+            for col, label in zip(
+                header, ["Title", "Description", "Assigned to", "Status", "Due date", "Hours (logged/est.)"]
+            ):
+                col.markdown(f"**{label}**")
+
+            for t in filtered_roots:
+                subtasks = subtasks_by_parent.get(t["id"], [])
+                own_est = float(t.get("estimate_hours") or 0)
+                own_logged = float(t.get("logged_hours") or 0)
+                sub_est = sum(float(s.get("estimate_hours") or 0) for s in subtasks)
+                sub_logged = sum(float(s.get("logged_hours") or 0) for s in subtasks)
+                total_est = own_est + sub_est
+                total_logged = own_logged + sub_logged
+
+                desc = t.get("description") or "—"
+                if len(desc) > 60:
+                    desc = desc[:57] + "..."
+
+                row = st.columns([2, 3, 2, 1.5, 1.5, 1.5])
+                row[0].write(t["title"])
+                row[1].write(desc)
+                row[2].write(id_to_name.get(t.get("assignee_id"), "Unassigned"))
+                row[3].write(utils.STATUS_LABELS.get(t["status"], t["status"]))
+                row[4].write(t.get("due_date") or "—")
+                row[5].write(f"{total_logged:g}/{total_est:g}h")
+
+                if subtasks:
+                    with st.expander(f"▸ {len(subtasks)} sub-task(s)", expanded=False):
+                        sub_df = pd.DataFrame([{
+                            "Sub-task": s["title"],
+                            "Assigned to": id_to_name.get(s.get("assignee_id"), "Unassigned"),
+                            "Status": utils.STATUS_LABELS.get(s["status"], s["status"]),
+                            "Due date": s.get("due_date") or "—",
+                            "Est. hours": s.get("estimate_hours") or 0,
+                            "Logged hours": s.get("logged_hours") or 0,
+                        } for s in subtasks])
+                        st.dataframe(sub_df, use_container_width=True, hide_index=True)
 
 st.caption(
     "Use the pages in the left sidebar: **Projects** to create work, "
