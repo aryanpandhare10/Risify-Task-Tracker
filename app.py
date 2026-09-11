@@ -107,7 +107,7 @@ if is_admin:
                 "Tasks done": r["done_tasks"],
                 "Task completion %": round(r["task_pct"], 1),
                 "Hours estimated": round(r["total_hours"], 1),
-                "Hours completed": round(r["done_hours"], 1),
+                "Hours logged": round(r["logged_hours"], 1),
                 "Hours completion %": round(r["hours_pct"], 1),
             } for r in person_rows])
             st.dataframe(person_df, use_container_width=True, hide_index=True)
