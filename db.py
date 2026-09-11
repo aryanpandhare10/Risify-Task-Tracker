@@ -164,6 +164,15 @@ def update_task(task_id: str, updated_by: str, **fields) -> dict:
     return res.data[0]
 
 
+def update_task_estimate(task_id: str, updated_by: str, estimate_hours: float) -> dict:
+    return update_task(task_id, updated_by, estimate_hours=estimate_hours)
+
+
+def log_hours(task_id: str, updated_by: str, logged_hours: float) -> dict:
+    """Set a task's running total of hours actually worked so far."""
+    return update_task(task_id, updated_by, logged_hours=logged_hours)
+
+
 # ---------------------------------------------------------------
 # Comments
 # ---------------------------------------------------------------
