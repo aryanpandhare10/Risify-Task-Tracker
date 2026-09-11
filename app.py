@@ -51,7 +51,7 @@ for p in projects:
         with pcol2:
             st.progress(
                 min(int(prog["hours_pct"]), 100),
-                text=f"Hours: {prog['done_hours']:.1f}/{prog['total_hours']:.1f} done "
+                text=f"Hours: {prog['logged_hours']:.1f}/{prog['total_hours']:.1f} logged "
                 f"({prog['hours_pct']:.0f}%)",
             )
 
@@ -75,7 +75,7 @@ if is_admin:
             "Project": f"{p['key']} — {p['name']}",
             "Tasks done": f"{prog['done_tasks']}/{prog['total_tasks']}",
             "Task completion %": round(prog["task_pct"], 1),
-            "Hours done": f"{prog['done_hours']:.1f}/{prog['total_hours']:.1f}",
+            "Hours logged": f"{prog['logged_hours']:.1f}/{prog['total_hours']:.1f}",
             "Hours completion %": round(prog["hours_pct"], 1),
         })
     st.dataframe(pd.DataFrame(overview_rows), use_container_width=True, hide_index=True)
@@ -89,7 +89,7 @@ if is_admin:
         "Tasks done": r["done_tasks"],
         "Task completion %": round(r["task_pct"], 1),
         "Hours estimated": round(r["total_hours"], 1),
-        "Hours completed": round(r["done_hours"], 1),
+        "Hours logged": round(r["logged_hours"], 1),
         "Hours completion %": round(r["hours_pct"], 1),
     } for r in team_rows])
     st.dataframe(team_df, use_container_width=True, hide_index=True)
@@ -118,7 +118,8 @@ if is_admin:
                 "Title": t["title"],
                 "Assignee": id_to_name.get(t.get("assignee_id"), "Unassigned"),
                 "Status": utils.STATUS_LABELS.get(t["status"], t["status"]),
-                "Hours": t.get("estimate_hours") or 0,
+                "Est. hours": t.get("estimate_hours") or 0,
+                "Logged hours": t.get("logged_hours") or 0,
             } for t in sorted(proj_tasks, key=lambda t: id_to_name.get(t.get("assignee_id"), "Unassigned"))])
             st.dataframe(task_df, use_container_width=True, hide_index=True)
 
