@@ -54,6 +54,7 @@ create table if not exists tasks (
   reporter_id   uuid not null references profiles(id),
   updated_by    uuid references profiles(id),        -- app sets this on every write; triggers use it as "actor"
   due_date      date,
+  estimate_hours numeric not null default 0 check (estimate_hours >= 0),
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now(),
   completed_at  timestamptz
@@ -208,3 +209,13 @@ create policy "tasks_all" on tasks for all to authenticated using (true) with ch
 create policy "task_activity_select" on task_activity for select to authenticated using (true);
 create policy "task_activity_insert" on task_activity for insert to authenticated with check (true);
 create policy "comments_all" on comments for all to authenticated using (true) with check (true);
+
+-- ============================================================
+-- MIGRATION: add estimate_hours to an already-existing tasks table.
+-- `create table if not exists` above won't add columns to a table that
+-- already exists, so re-running this file on an existing database needs
+-- this explicit ALTER to pick up the new column.
+-- ============================================================
+alter table tasks add column if not exists estimate_hours numeric not null default 0;
+alter table tasks drop constraint if exists tasks_estimate_hours_check;
+alter table tasks add constraint tasks_estimate_hours_check check (estimate_hours >= 0);
