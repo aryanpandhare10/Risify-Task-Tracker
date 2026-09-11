@@ -106,9 +106,8 @@ with tab_tasks:
 
             with st.expander("Details, sub-tasks & comments"):
                 st.write(t.get("description") or "_No description_")
-                st.caption(f"Estimated hours: {t.get('estimate_hours') or 0}")
 
-                cols = st.columns([2, 2, 1, 1])
+                cols = st.columns([2, 2, 1, 1, 1])
                 new_status = cols[0].selectbox(
                     "Status", utils.STATUS_OPTIONS,
                     index=utils.STATUS_OPTIONS.index(t["status"]),
@@ -127,13 +126,19 @@ with tab_tasks:
                     value=float(t.get("estimate_hours") or 0),
                     key=f"estimate_{t['id']}",
                 )
-                cols[3].write("")
-                if cols[3].button("Save", key=f"save_{t['id']}"):
+                new_logged = cols[3].number_input(
+                    "Logged hours", min_value=0.0, step=0.5,
+                    value=float(t.get("logged_hours") or 0),
+                    key=f"logged_{t['id']}",
+                )
+                cols[4].write("")
+                if cols[4].button("Save", key=f"save_{t['id']}"):
                     update_task(
                         t["id"], profile["id"],
                         status=new_status,
                         assignee_id=profile_map.get(new_assignee_name),
                         estimate_hours=new_estimate,
+                        logged_hours=new_logged,
                     )
                     st.rerun()
 
