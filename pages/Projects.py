@@ -69,12 +69,13 @@ with tab_tasks:
         with st.form("new_task"):
             title = st.text_input("Title")
             desc = st.text_area("Description")
-            c1, c2, c3, c4 = st.columns(4)
+            c1, c2, c3 = st.columns(3)
             issue_type = c1.selectbox("Type", utils.ISSUE_TYPE_ROOT_OPTIONS)
             priority = c2.selectbox("Priority", utils.PRIORITY_OPTIONS, index=2)
             assignee_name = c3.selectbox("Assignee", ["Unassigned"] + list(profile_map.keys()))
-            est_hours = c4.number_input("Estimated hours", min_value=0.0, step=0.5, value=0.0)
-            due = st.date_input("Due date", value=None)
+            c4, c5 = st.columns(2)
+            due = c4.date_input("Due date", value=None)
+            estimate_hours = c5.number_input("Estimated hours", min_value=0.0, step=0.5, value=0.0)
             submitted_task = st.form_submit_button("Create task")
         if submitted_task:
             if not title:
@@ -84,7 +85,7 @@ with tab_tasks:
                 create_task(
                     project_id, title, desc, issue_type, priority, assignee_id,
                     profile["id"], due_date=str(due) if due else None,
-                    estimated_hours=est_hours if est_hours > 0 else None,
+                    estimate_hours=estimate_hours,
                 )
                 st.success("Task created.")
                 st.rerun()
@@ -105,10 +106,9 @@ with tab_tasks:
 
             with st.expander("Details, sub-tasks & comments"):
                 st.write(t.get("description") or "_No description_")
-                if t.get("estimated_hours"):
-                    st.caption(f"Estimated: {t['estimated_hours']} hrs")
+                st.caption(f"Estimated hours: {t.get('estimate_hours') or 0}")
 
-                cols = st.columns([2, 2, 1])
+                cols = st.columns([2, 2, 1, 1])
                 new_status = cols[0].selectbox(
                     "Status", utils.STATUS_OPTIONS,
                     index=utils.STATUS_OPTIONS.index(t["status"]),
@@ -122,11 +122,18 @@ with tab_tasks:
                     if current_assignee_name in assignee_options else 0,
                     key=f"assignee_{t['id']}",
                 )
-                if cols[2].button("Save", key=f"save_{t['id']}"):
+                new_estimate = cols[2].number_input(
+                    "Est. hours", min_value=0.0, step=0.5,
+                    value=float(t.get("estimate_hours") or 0),
+                    key=f"estimate_{t['id']}",
+                )
+                cols[3].write("")
+                if cols[3].button("Save", key=f"save_{t['id']}"):
                     update_task(
                         t["id"], profile["id"],
                         status=new_status,
                         assignee_id=profile_map.get(new_assignee_name),
+                        estimate_hours=new_estimate,
                     )
                     st.rerun()
 
@@ -139,20 +146,27 @@ with tab_tasks:
                     st.write(
                         f"- **{st_['task_key']}** {st_['title']} — "
                         f"{utils.STATUS_LABELS.get(st_['status'])} "
-                        f"({sub_assignee.get('full_name') or 'Unassigned'})"
+                        f"({sub_assignee.get('full_name') or 'Unassigned'}, "
+                        f"{st_.get('estimate_hours') or 0}h)"
                     )
 
                 with st.form(f"subtask_form_{t['id']}"):
                     sub_title = st.text_input("New sub-task title", key=f"sub_title_{t['id']}")
-                    sub_assignee_name = st.selectbox(
+                    sub_c1, sub_c2 = st.columns(2)
+                    sub_assignee_name = sub_c1.selectbox(
                         "Assignee", ["Unassigned"] + list(profile_map.keys()),
                         key=f"sub_assignee_{t['id']}",
+                    )
+                    sub_estimate = sub_c2.number_input(
+                        "Estimated hours", min_value=0.0, step=0.5, value=0.0,
+                        key=f"sub_estimate_{t['id']}",
                     )
                     sub_submitted = st.form_submit_button("Add sub-task")
                 if sub_submitted and sub_title:
                     create_task(
                         project_id, sub_title, "", "subtask", "medium",
                         profile_map.get(sub_assignee_name), profile["id"], parent_id=t["id"],
+                        estimate_hours=sub_estimate,
                     )
                     st.rerun()
 
