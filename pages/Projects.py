@@ -1,3 +1,5 @@
+import datetime as dt
+
 import streamlit as st
 
 from auth import require_login, logout_button
@@ -12,6 +14,7 @@ from db import (
     list_subtasks,
     create_task,
     update_task,
+    delete_task,
     list_comments,
     create_comment,
 )
@@ -105,7 +108,40 @@ with tab_tasks:
             top[3].write(assignee.get("full_name") or "Unassigned")
 
             with st.expander("Details, sub-tasks & comments"):
-                st.write(t.get("description") or "_No description_")
+                st.markdown("##### Edit task")
+                edit_title = st.text_input("Title", value=t["title"], key=f"edit_title_{t['id']}")
+                edit_desc = st.text_area(
+                    "Description", value=t.get("description") or "", key=f"edit_desc_{t['id']}"
+                )
+                ecol1, ecol2 = st.columns(2)
+                edit_priority = ecol1.selectbox(
+                    "Priority", utils.PRIORITY_OPTIONS,
+                    index=utils.PRIORITY_OPTIONS.index(t["priority"]),
+                    key=f"edit_priority_{t['id']}",
+                )
+                current_due = dt.date.fromisoformat(t["due_date"]) if t.get("due_date") else None
+                edit_due = ecol2.date_input("Due date", value=current_due, key=f"edit_due_{t['id']}")
+                if st.button("💾 Save edits", key=f"save_edit_{t['id']}"):
+                    if not edit_title:
+                        st.error("Title is required.")
+                    else:
+                        update_task(
+                            t["id"], profile["id"],
+                            title=edit_title, description=edit_desc, priority=edit_priority,
+                            due_date=str(edit_due) if edit_due else None,
+                        )
+                        st.rerun()
+
+                del_col1, del_col2 = st.columns([3, 1])
+                confirm_delete = del_col1.checkbox(
+                    "Confirm delete this task (and its sub-tasks)", key=f"confirm_del_{t['id']}"
+                )
+                if del_col2.button("🗑️ Delete task", key=f"del_{t['id']}", disabled=not confirm_delete):
+                    delete_task(t["id"])
+                    st.success("Task deleted.")
+                    st.rerun()
+
+                st.divider()
 
                 cols = st.columns([2, 2, 1, 1, 1])
                 new_status = cols[0].selectbox(
@@ -148,12 +184,54 @@ with tab_tasks:
                     st.caption("No sub-tasks yet.")
                 for st_ in subtasks:
                     sub_assignee = st_.get("profiles") or {}
-                    st.write(
+                    sub_row = st.columns([4, 1])
+                    sub_row[0].write(
                         f"- **{st_['task_key']}** {st_['title']} — "
                         f"{utils.STATUS_LABELS.get(st_['status'])} "
                         f"({sub_assignee.get('full_name') or 'Unassigned'}, "
                         f"{st_.get('estimate_hours') or 0}h)"
                     )
+                    with sub_row[1].popover("✏️ Edit"):
+                        sub_edit_title = st.text_input(
+                            "Title", value=st_["title"], key=f"sub_edit_title_{st_['id']}"
+                        )
+                        sub_edit_status = st.selectbox(
+                            "Status", utils.STATUS_OPTIONS,
+                            index=utils.STATUS_OPTIONS.index(st_["status"]),
+                            key=f"sub_edit_status_{st_['id']}",
+                        )
+                        sub_assignee_options = ["Unassigned"] + list(profile_map.keys())
+                        sub_current_assignee_name = sub_assignee.get("full_name") or "Unassigned"
+                        sub_edit_assignee_name = st.selectbox(
+                            "Assignee", sub_assignee_options,
+                            index=sub_assignee_options.index(sub_current_assignee_name)
+                            if sub_current_assignee_name in sub_assignee_options else 0,
+                            key=f"sub_edit_assignee_{st_['id']}",
+                        )
+                        sub_edit_estimate = st.number_input(
+                            "Estimated hours", min_value=0.0, step=0.5,
+                            value=float(st_.get("estimate_hours") or 0),
+                            key=f"sub_edit_est_{st_['id']}",
+                        )
+                        if st.button("💾 Save", key=f"sub_save_{st_['id']}"):
+                            update_task(
+                                st_["id"], profile["id"],
+                                title=sub_edit_title, status=sub_edit_status,
+                                assignee_id=profile_map.get(sub_edit_assignee_name),
+                                estimate_hours=sub_edit_estimate,
+                            )
+                            st.rerun()
+
+                        st.divider()
+                        sub_confirm_delete = st.checkbox(
+                            "Confirm delete this sub-task", key=f"sub_confirm_del_{st_['id']}"
+                        )
+                        if st.button(
+                            "🗑️ Delete sub-task", key=f"sub_del_{st_['id']}",
+                            disabled=not sub_confirm_delete,
+                        ):
+                            delete_task(st_["id"])
+                            st.rerun()
 
                 with st.form(f"subtask_form_{t['id']}"):
                     sub_title = st.text_input("New sub-task title", key=f"sub_title_{t['id']}")
