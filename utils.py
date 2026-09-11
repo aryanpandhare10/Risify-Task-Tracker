@@ -37,22 +37,22 @@ def name_to_id_map(profiles: list) -> dict:
 def project_progress(tasks: list) -> dict:
     """Aggregate progress for one project's tasks (flat list, subtasks included).
 
-    Hours completion = estimate_hours of tasks whose status is 'done' /
-    estimate_hours across all tasks (there's no separate time-logging field,
-    so a task's full estimate counts once it's marked Done).
+    Hours completion = sum(logged_hours) / sum(estimate_hours) across the
+    tasks — reflects actual hours worked (self-reported by assignees) against
+    what was estimated, independent of task status.
     """
     total_tasks = len(tasks)
     done_tasks = [t for t in tasks if t["status"] == "done"]
     total_hours = sum(float(t.get("estimate_hours") or 0) for t in tasks)
-    done_hours = sum(float(t.get("estimate_hours") or 0) for t in done_tasks)
+    logged_hours = sum(float(t.get("logged_hours") or 0) for t in tasks)
 
     return {
         "total_tasks": total_tasks,
         "done_tasks": len(done_tasks),
         "task_pct": (len(done_tasks) / total_tasks * 100) if total_tasks else 0.0,
         "total_hours": total_hours,
-        "done_hours": done_hours,
-        "hours_pct": (done_hours / total_hours * 100) if total_hours else 0.0,
+        "logged_hours": logged_hours,
+        "hours_pct": (logged_hours / total_hours * 100) if total_hours else 0.0,
     }
 
 
