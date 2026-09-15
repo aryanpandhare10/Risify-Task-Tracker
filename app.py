@@ -5,12 +5,12 @@ from auth import require_login, logout_button
 from db import list_projects, list_tasks, list_profiles, update_project
 import utils
 
-st.set_page_config(page_title="Jira-lite", page_icon="🔷", layout="wide")
+st.set_page_config(page_title="Mustard", page_icon="🔷", layout="wide")
 
 profile = require_login()
 is_admin = profile["role"] == "admin"
 
-st.sidebar.title("🔷 Jira-lite")
+st.sidebar.title("🔷 Risify Task Tracker")
 st.sidebar.write(f"Signed in as **{profile['full_name']}**")
 st.sidebar.caption(profile["role"].title())
 logout_button()
