@@ -2,7 +2,7 @@ import pandas as pd
 import streamlit as st
 
 from auth import require_login, logout_button
-from db import list_projects, list_tasks, list_profiles
+from db import list_projects, list_tasks, list_profiles, update_project
 import utils
 
 st.set_page_config(page_title="Jira-lite", page_icon="🔷", layout="wide")
@@ -32,6 +32,10 @@ if not projects:
     st.info("No projects yet. Open **Projects** in the sidebar to create one.")
     st.stop()
 
+all_profiles = list_profiles()
+id_to_name = {pr["id"]: pr["full_name"] for pr in all_profiles}
+name_to_id = {v: k for k, v in id_to_name.items()}
+
 # Fetch every project's tasks once and reuse below (progress cards + admin analytics).
 tasks_by_project = {p["id"]: list_tasks(project_id=p["id"]) for p in projects}
 
@@ -55,6 +59,37 @@ for p in projects:
                 f"({prog['hours_pct']:.0f}%)",
             )
 
+        owner_options = ["Unassigned"] + list(name_to_id.keys())
+        current_owner_name = id_to_name.get(p.get("lead_id"), "Unassigned")
+
+        ocol1, ocol2, ocol3, ocol4 = st.columns([2, 2, 2, 1])
+        new_owner_name = ocol1.selectbox(
+            "Primary owner", owner_options,
+            index=owner_options.index(current_owner_name)
+            if current_owner_name in owner_options else 0,
+            key=f"owner_{p['id']}",
+        )
+        new_completion = ocol2.text_input(
+            "Completion date", value=p.get("completion_date") or "",
+            key=f"completion_{p['id']}",
+        )
+        new_priority = ocol3.selectbox(
+            "Priority", utils.PRIORITY_OPTIONS,
+            index=utils.PRIORITY_OPTIONS.index(p.get("priority") or "medium"),
+            format_func=lambda x: f"{utils.PRIORITY_ICONS.get(x, '')} {x.title()}",
+            key=f"priority_{p['id']}",
+        )
+        ocol4.write("")
+        ocol4.write("")
+        if ocol4.button("💾", key=f"save_proj_{p['id']}", help="Save"):
+            update_project(
+                p["id"],
+                lead_id=name_to_id.get(new_owner_name),
+                completion_date=new_completion,
+                priority=new_priority,
+            )
+            st.rerun()
+
 # =====================================================================
 # Admin analytics — project & people level view. Admins don't add tasks
 # here; this is purely an oversight view of who's doing what and how
@@ -64,15 +99,15 @@ if is_admin:
     st.divider()
     st.header("📊 Admin analytics")
 
-    all_profiles = list_profiles()
-    id_to_name = {pr["id"]: pr["full_name"] for pr in all_profiles}
-
     st.subheader("Project overview")
     overview_rows = []
     for p in projects:
         prog = utils.project_progress(tasks_by_project[p["id"]])
         overview_rows.append({
             "Project": f"{p['key']} — {p['name']}",
+            "Owner": id_to_name.get(p.get("lead_id"), "Unassigned"),
+            "Priority": (p.get("priority") or "medium").title(),
+            "Target completion": p.get("completion_date") or "—",
             "Tasks done": f"{prog['done_tasks']}/{prog['total_tasks']}",
             "Task completion %": round(prog["task_pct"], 1),
             "Hours logged": f"{prog['logged_hours']:.1f}/{prog['total_hours']:.1f}",
