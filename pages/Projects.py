@@ -75,7 +75,7 @@ with tab_tasks:
             c1, c2, c3 = st.columns(3)
             issue_type = c1.selectbox("Type", utils.ISSUE_TYPE_ROOT_OPTIONS)
             priority = c2.selectbox("Priority", utils.PRIORITY_OPTIONS, index=2)
-            assignee_name = c3.selectbox("Assignee", ["Unassigned"] + list(profile_map.keys()))
+            assignee_name = c3.selectbox("Assigned To", ["Unassigned"] + list(profile_map.keys()))
             c4, c5 = st.columns(2)
             due = c4.date_input("Due date", value=None)
             estimate_hours = c5.number_input("Estimated hours", min_value=0.0, step=0.5, value=0.0)
