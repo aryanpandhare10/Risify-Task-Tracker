@@ -42,7 +42,13 @@ tasks_by_project = {p["id"]: list_tasks(project_id=p["id"]) for p in projects}
 for p in projects:
     prog = utils.project_progress(tasks_by_project[p["id"]], rollup=True)
     with st.container(border=True):
-        st.markdown(f"**{p['key']}** — {p['name']}")
+        title_col, proj_completion_col = st.columns([3, 1])
+        title_col.markdown(f"**{p['key']}** — {p['name']}")
+        proj_completion_col.markdown(
+            f"<div style='text-align:right'>Project Completion Date<br>"
+            f"<b>{p.get('project_completion_date') or '—'}</b></div>",
+            unsafe_allow_html=True,
+        )
         st.caption(p.get("description") or "No description")
 
         pcol1, pcol2 = st.columns(2)
@@ -66,7 +72,7 @@ for p in projects:
         if is_admin:
             owner_options = ["Unassigned"] + list(name_to_id.keys())
 
-            ocol1, ocol2, ocol3, ocol4 = st.columns([2, 2, 2, 1])
+            ocol1, ocol2, ocol3, ocol4, ocol5 = st.columns([2, 2, 2, 2, 1])
             new_owner_name = ocol1.selectbox(
                 "Primary owner", owner_options,
                 index=owner_options.index(current_owner_name)
@@ -74,7 +80,7 @@ for p in projects:
                 key=f"owner_{p['id']}",
             )
             new_completion = ocol2.text_input(
-                "Completion date", value=p.get("completion_date") or "",
+                "Next task completion", value=p.get("completion_date") or "",
                 key=f"completion_{p['id']}",
             )
             new_priority = ocol3.selectbox(
@@ -83,21 +89,26 @@ for p in projects:
                 format_func=lambda x: f"{utils.PRIORITY_ICONS.get(x, '')} {x.title()}",
                 key=f"priority_{p['id']}",
             )
-            ocol4.write("")
-            ocol4.write("")
-            if ocol4.button("💾", key=f"save_proj_{p['id']}", help="Save"):
+            new_project_completion = ocol4.text_input(
+                "Project completion date", value=p.get("project_completion_date") or "",
+                key=f"proj_completion_{p['id']}",
+            )
+            ocol5.write("")
+            ocol5.write("")
+            if ocol5.button("💾", key=f"save_proj_{p['id']}", help="Save"):
                 update_project(
                     p["id"],
                     lead_id=name_to_id.get(new_owner_name),
                     completion_date=new_completion,
                     priority=new_priority,
+                    project_completion_date=new_project_completion,
                 )
                 st.rerun()
         else:
             st.caption(
                 f"Owner: {current_owner_name} · "
                 f"Priority: {utils.PRIORITY_ICONS.get(current_priority, '')} {current_priority.title()} · "
-                f"Target completion: {current_completion}"
+                f"Next task completion: {current_completion}"
             )
 
 # =====================================================================
@@ -117,7 +128,8 @@ if is_admin:
             "Project": f"{p['key']} — {p['name']}",
             "Owner": id_to_name.get(p.get("lead_id"), "Unassigned"),
             "Priority": (p.get("priority") or "medium").title(),
-            "Target completion": p.get("completion_date") or "—",
+            "Next task completion": p.get("completion_date") or "—",
+            "Project completion": p.get("project_completion_date") or "—",
             "Tasks done": f"{prog['done_tasks']}/{prog['total_tasks']}",
             "Task completion %": round(prog["task_pct"], 1),
             "Hours logged": f"{prog['logged_hours']:.1f}/{prog['total_hours']:.1f}",
