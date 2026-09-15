@@ -5,12 +5,12 @@ from auth import require_login, logout_button
 from db import list_projects, list_tasks, list_profiles, update_project
 import utils
 
-st.set_page_config(page_title="Mustard", page_icon="🔷", layout="wide")
+st.set_page_config(page_title="Jira-lite", page_icon="🔷", layout="wide")
 
 profile = require_login()
 is_admin = profile["role"] == "admin"
 
-st.sidebar.title("🔷 Risify Task Tracker")
+st.sidebar.title("🔷 Jira-lite")
 st.sidebar.write(f"Signed in as **{profile['full_name']}**")
 st.sidebar.caption(profile["role"].title())
 logout_button()
@@ -40,7 +40,7 @@ name_to_id = {v: k for k, v in id_to_name.items()}
 tasks_by_project = {p["id"]: list_tasks(project_id=p["id"]) for p in projects}
 
 for p in projects:
-    prog = utils.project_progress(tasks_by_project[p["id"]])
+    prog = utils.project_progress(tasks_by_project[p["id"]], rollup=True)
     with st.container(border=True):
         st.markdown(f"**{p['key']}** — {p['name']}")
         st.caption(p.get("description") or "No description")
@@ -59,36 +59,46 @@ for p in projects:
                 f"({prog['hours_pct']:.0f}%)",
             )
 
-        owner_options = ["Unassigned"] + list(name_to_id.keys())
         current_owner_name = id_to_name.get(p.get("lead_id"), "Unassigned")
+        current_priority = p.get("priority") or "medium"
+        current_completion = p.get("completion_date") or "—"
 
-        ocol1, ocol2, ocol3, ocol4 = st.columns([2, 2, 2, 1])
-        new_owner_name = ocol1.selectbox(
-            "Primary owner", owner_options,
-            index=owner_options.index(current_owner_name)
-            if current_owner_name in owner_options else 0,
-            key=f"owner_{p['id']}",
-        )
-        new_completion = ocol2.text_input(
-            "Completion date", value=p.get("completion_date") or "",
-            key=f"completion_{p['id']}",
-        )
-        new_priority = ocol3.selectbox(
-            "Priority", utils.PRIORITY_OPTIONS,
-            index=utils.PRIORITY_OPTIONS.index(p.get("priority") or "medium"),
-            format_func=lambda x: f"{utils.PRIORITY_ICONS.get(x, '')} {x.title()}",
-            key=f"priority_{p['id']}",
-        )
-        ocol4.write("")
-        ocol4.write("")
-        if ocol4.button("💾", key=f"save_proj_{p['id']}", help="Save"):
-            update_project(
-                p["id"],
-                lead_id=name_to_id.get(new_owner_name),
-                completion_date=new_completion,
-                priority=new_priority,
+        if is_admin:
+            owner_options = ["Unassigned"] + list(name_to_id.keys())
+
+            ocol1, ocol2, ocol3, ocol4 = st.columns([2, 2, 2, 1])
+            new_owner_name = ocol1.selectbox(
+                "Primary owner", owner_options,
+                index=owner_options.index(current_owner_name)
+                if current_owner_name in owner_options else 0,
+                key=f"owner_{p['id']}",
             )
-            st.rerun()
+            new_completion = ocol2.text_input(
+                "Completion date", value=p.get("completion_date") or "",
+                key=f"completion_{p['id']}",
+            )
+            new_priority = ocol3.selectbox(
+                "Priority", utils.PRIORITY_OPTIONS,
+                index=utils.PRIORITY_OPTIONS.index(current_priority),
+                format_func=lambda x: f"{utils.PRIORITY_ICONS.get(x, '')} {x.title()}",
+                key=f"priority_{p['id']}",
+            )
+            ocol4.write("")
+            ocol4.write("")
+            if ocol4.button("💾", key=f"save_proj_{p['id']}", help="Save"):
+                update_project(
+                    p["id"],
+                    lead_id=name_to_id.get(new_owner_name),
+                    completion_date=new_completion,
+                    priority=new_priority,
+                )
+                st.rerun()
+        else:
+            st.caption(
+                f"Owner: {current_owner_name} · "
+                f"Priority: {utils.PRIORITY_ICONS.get(current_priority, '')} {current_priority.title()} · "
+                f"Target completion: {current_completion}"
+            )
 
 # =====================================================================
 # Admin analytics — project & people level view. Admins don't add tasks
@@ -102,7 +112,7 @@ if is_admin:
     st.subheader("Project overview")
     overview_rows = []
     for p in projects:
-        prog = utils.project_progress(tasks_by_project[p["id"]])
+        prog = utils.project_progress(tasks_by_project[p["id"]], rollup=True)
         overview_rows.append({
             "Project": f"{p['key']} — {p['name']}",
             "Owner": id_to_name.get(p.get("lead_id"), "Unassigned"),
@@ -201,8 +211,8 @@ if is_admin:
                 own_logged = float(t.get("logged_hours") or 0)
                 sub_est = sum(float(s.get("estimate_hours") or 0) for s in subtasks)
                 sub_logged = sum(float(s.get("logged_hours") or 0) for s in subtasks)
-                total_est = own_est + sub_est
-                total_logged = own_logged + sub_logged
+                total_est = max(own_est, sub_est)
+                total_logged = max(own_logged, sub_logged)
 
                 full_desc = t.get("description") or "—"
 
