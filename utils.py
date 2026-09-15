@@ -1,6 +1,6 @@
 """
 Shared constants and small helpers used across pages.
-""" 
+"""
 
 STATUS_OPTIONS = ["todo", "in_progress", "in_review", "done"]
 STATUS_LABELS = {
@@ -47,22 +47,48 @@ def checkbox_filter(st, label: str, options: list, key_prefix: str, format_func=
     return selected
 
 
-def project_progress(tasks: list) -> dict:
+def project_progress(tasks: list, rollup: bool = False) -> dict:
     """Aggregate progress for one project's tasks (flat list, subtasks included).
 
-    Hours completion = sum(logged_hours) / sum(estimate_hours) across the
-    tasks — reflects actual hours worked (self-reported by assignees) against
-    what was estimated, independent of task status.
+    Hours completion = sum(logged_hours) / sum(estimate_hours) — reflects
+    actual hours worked against what was estimated, independent of status.
+
+    rollup=True treats a sub-task as a further breakdown of its parent's
+    estimate rather than additional work on top of it: each root task
+    contributes max(its own hours, sum of its sub-tasks' hours) instead of
+    (its own hours + sum of its sub-tasks' hours). Use this for project-wide
+    totals; leave it off (default) when `tasks` is an arbitrary subset (e.g.
+    one person's tasks) where parent/child pairs may be split across people.
     """
     total_tasks = len(tasks)
     done_tasks = [t for t in tasks if t["status"] == "done"]
-    total_hours = sum(float(t.get("estimate_hours") or 0) for t in tasks)
-    logged_hours = sum(float(t.get("logged_hours") or 0) for t in tasks)
+    task_pct = (len(done_tasks) / total_tasks * 100) if total_tasks else 0.0
+
+    if rollup:
+        children_by_parent: dict = {}
+        for t in tasks:
+            pid = t.get("parent_id")
+            if pid:
+                children_by_parent.setdefault(pid, []).append(t)
+
+        total_hours = 0.0
+        logged_hours = 0.0
+        for t in tasks:
+            if t.get("parent_id"):
+                continue  # counted via its parent below
+            children = children_by_parent.get(t["id"], [])
+            child_est = sum(float(c.get("estimate_hours") or 0) for c in children)
+            child_logged = sum(float(c.get("logged_hours") or 0) for c in children)
+            total_hours += max(float(t.get("estimate_hours") or 0), child_est)
+            logged_hours += max(float(t.get("logged_hours") or 0), child_logged)
+    else:
+        total_hours = sum(float(t.get("estimate_hours") or 0) for t in tasks)
+        logged_hours = sum(float(t.get("logged_hours") or 0) for t in tasks)
 
     return {
         "total_tasks": total_tasks,
         "done_tasks": len(done_tasks),
-        "task_pct": (len(done_tasks) / total_tasks * 100) if total_tasks else 0.0,
+        "task_pct": task_pct,
         "total_hours": total_hours,
         "logged_hours": logged_hours,
         "hours_pct": (logged_hours / total_hours * 100) if total_hours else 0.0,
