@@ -1,6 +1,6 @@
 """
 Shared constants and small helpers used across pages.
-"""
+""" 
 
 STATUS_OPTIONS = ["todo", "in_progress", "in_review", "done"]
 STATUS_LABELS = {
