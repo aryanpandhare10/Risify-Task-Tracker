@@ -65,6 +65,12 @@ def create_project(key: str, name: str, description: str, lead_id: str, created_
     return res.data[0]
 
 
+def update_project(project_id: str, **fields) -> dict:
+    sb = get_client()
+    res = sb.table("projects").update(fields).eq("id", project_id).execute()
+    return res.data[0]
+
+
 def add_project_member(project_id: str, user_id: str, role: str = "member") -> None:
     sb = get_client()
     sb.table("project_members").upsert(
