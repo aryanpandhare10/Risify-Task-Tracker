@@ -33,67 +33,63 @@ name_to_id = {v: k for k, v in id_to_name.items()}
 tasks_by_project = {p["id"]: list_tasks(project_id=p["id"]) for p in projects}
 
 # =====================================================================
-# Project overview — shown first. One collapsible row per project; expanding
-# it shows the project's main tasks grouped into In Progress / Completed /
-# Overdue, each card listing its sub-tasks coloured by their own category.
+# Project overview — shown first. Click a project row to list its main
+# tasks below (sub-tasks excluded), with the date and status coloured by
+# category: default = In Progress, green = Completed, red = Overdue.
 # =====================================================================
-st.subheader("📋 Project Overview")
+st.subheader("📋 Project overview")
 today = dt.date.today()
 
-
-def _due_sort_key(t: dict):
-    return (t.get("due_date") is None, t.get("due_date") or "")
-
-
+overview_rows = []
 for p in projects:
-    proj_tasks = tasks_by_project[p["id"]]
-    main_tasks = [t for t in proj_tasks if not t.get("parent_id")]
-    subtasks_by_parent: dict = {}
-    for t in proj_tasks:
-        if t.get("parent_id"):
-            subtasks_by_parent.setdefault(t["parent_id"], []).append(t)
+    prog = utils.project_progress(tasks_by_project[p["id"]], rollup=True)
+    overview_rows.append({
+        "Project": f"{p['key']} — {p['name']}",
+        "Owner": id_to_name.get(p.get("lead_id"), "Unassigned"),
+        "Priority": (p.get("priority") or "medium").title(),
+        "Next task completion": p.get("completion_date") or "—",
+        "Project completion": p.get("project_completion_date") or "—",
+        "Tasks done": f"{prog['done_tasks']}/{prog['total_tasks']}",
+        "Task completion %": round(prog["task_pct"], 1),
+        "Hours logged": f"{prog['logged_hours']:.1f}/{prog['total_hours']:.1f}",
+        "Hours completion %": round(prog["hours_pct"], 1),
+    })
 
-    by_category = {c: [] for c in utils.TASK_CATEGORIES}
-    for t in main_tasks:
-        by_category[utils.task_category(t, today)].append(t)
+overview_event = st.dataframe(
+    pd.DataFrame(overview_rows), use_container_width=True, hide_index=True,
+    on_select="rerun", selection_mode="single-row", key="project_overview",
+)
+selected_rows = overview_event.selection.rows
 
-    counts = " · ".join(
-        utils.colorize(f"{len(by_category[c])} {utils.TASK_CATEGORY_LABELS[c]}", c)
-        for c in utils.TASK_CATEGORIES
+if not selected_rows:
+    st.caption("Click a project row to see its main tasks.")
+else:
+    sel = projects[selected_rows[0]]
+    main_tasks = sorted(
+        [t for t in tasks_by_project[sel["id"]] if not t.get("parent_id")],
+        key=lambda t: (t.get("due_date") is None, t.get("due_date") or ""),
     )
-    with st.expander(f"**{p['key']}** — {p['name']}  |  {counts}"):
-        if not main_tasks:
-            st.caption("No tasks in this project yet.")
-            continue
+    st.markdown(f"**Main tasks — {sel['key']} — {sel['name']}**")
+    if not main_tasks:
+        st.caption("No tasks in this project yet.")
+    else:
+        categories = [utils.task_category(t, today) for t in main_tasks]
+        tasks_df = pd.DataFrame([{
+            "Task": t["title"],
+            "Due / Completed": utils.task_date_label(t),
+            "Status": utils.STATUS_LABELS.get(t["status"], t["status"]),
+        } for t in main_tasks])
 
-        section_cols = st.columns(len(utils.TASK_CATEGORIES))
-        for col, cat in zip(section_cols, utils.TASK_CATEGORIES):
-            with col:
-                st.markdown(
-                    f"#### {utils.colorize(utils.TASK_CATEGORY_LABELS[cat], cat)} "
-                    f"({len(by_category[cat])})"
-                )
-                if not by_category[cat]:
-                    st.caption("None")
-                for t in sorted(by_category[cat], key=_due_sort_key):
-                    with st.container(border=True):
-                        st.markdown(f"**{utils.colorize(t['title'], cat)}**")
-                        st.caption(utils.task_date_label(t))
-                        st.markdown(
-                            "Status: "
-                            + utils.colorize(utils.STATUS_LABELS.get(t["status"], t["status"]), cat)
-                        )
-                        subtasks = sorted(subtasks_by_parent.get(t["id"], []), key=_due_sort_key)
-                        if subtasks:
-                            st.caption(f"Sub-tasks ({len(subtasks)})")
-                            for s in subtasks:
-                                s_cat = utils.task_category(s, today)
-                                st.markdown(
-                                    f"↳ {utils.colorize(s['title'], s_cat)}  \n"
-                                    f"<small>{utils.STATUS_LABELS.get(s['status'], s['status'])}"
-                                    f" · {utils.task_date_label(s)}</small>",
-                                    unsafe_allow_html=True,
-                                )
+        def _category_colors(col: pd.Series) -> list:
+            return [
+                f"color: {utils.TASK_CATEGORY_COLORS[c]}" if utils.TASK_CATEGORY_COLORS[c] else ""
+                for c in categories
+            ]
+
+        st.dataframe(
+            tasks_df.style.apply(_category_colors, subset=["Due / Completed", "Status"]),
+            use_container_width=True, hide_index=True,
+        )
 
 st.divider()
 
@@ -187,23 +183,6 @@ for p in projects:
 if is_admin:
     st.divider()
     st.header("📊 Admin analytics")
-
-    st.subheader("Project overview")
-    overview_rows = []
-    for p in projects:
-        prog = utils.project_progress(tasks_by_project[p["id"]], rollup=True)
-        overview_rows.append({
-            "Project": f"{p['key']} — {p['name']}",
-            "Owner": id_to_name.get(p.get("lead_id"), "Unassigned"),
-            "Priority": (p.get("priority") or "medium").title(),
-            "Next task completion": p.get("completion_date") or "—",
-            "Project completion": p.get("project_completion_date") or "—",
-            "Tasks done": f"{prog['done_tasks']}/{prog['total_tasks']}",
-            "Task completion %": round(prog["task_pct"], 1),
-            "Hours logged": f"{prog['logged_hours']:.1f}/{prog['total_hours']:.1f}",
-            "Hours completion %": round(prog["hours_pct"], 1),
-        })
-    st.dataframe(pd.DataFrame(overview_rows), use_container_width=True, hide_index=True)
 
     st.subheader("Team overview (across all projects)")
     all_tasks = [t for ts in tasks_by_project.values() for t in ts]
