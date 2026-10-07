@@ -33,12 +33,6 @@ ISSUE_TYPE_ICONS = {
 
 # Overview categories derived from a task's status + due date (see task_category).
 # Colour None = default text colour.
-TASK_CATEGORIES = ["in_progress", "completed", "overdue"]
-TASK_CATEGORY_LABELS = {
-    "in_progress": "In Progress",
-    "completed": "Completed",
-    "overdue": "Overdue",
-}
 TASK_CATEGORY_COLORS = {
     "in_progress": None,
     "completed": "green",
@@ -56,12 +50,6 @@ def task_category(task: dict, today: dt.date = None) -> str:
     if due and due < today.isoformat():
         return "overdue"
     return "in_progress"
-
-
-def colorize(text: str, category: str) -> str:
-    """Wrap `text` in Streamlit markdown colour syntax for the given category."""
-    color = TASK_CATEGORY_COLORS.get(category)
-    return f":{color}[{text}]" if color else text
 
 
 def task_date_label(task: dict) -> str:
