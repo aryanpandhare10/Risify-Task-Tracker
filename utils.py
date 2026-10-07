@@ -1,6 +1,7 @@
 """
 Shared constants and small helpers used across pages.
 """
+import datetime as dt
 
 STATUS_OPTIONS = ["todo", "in_progress", "in_review", "done"]
 STATUS_LABELS = {
@@ -28,6 +29,47 @@ ISSUE_TYPE_ICONS = {
     "bug": "🐞",
     "story": "📘",
 }
+
+
+# Overview categories derived from a task's status + due date (see task_category).
+# Colour None = default text colour.
+TASK_CATEGORIES = ["in_progress", "completed", "overdue"]
+TASK_CATEGORY_LABELS = {
+    "in_progress": "In Progress",
+    "completed": "Completed",
+    "overdue": "Overdue",
+}
+TASK_CATEGORY_COLORS = {
+    "in_progress": None,
+    "completed": "green",
+    "overdue": "red",
+}
+
+
+def task_category(task: dict, today: dt.date = None) -> str:
+    """Completed if done; Overdue if the due date has passed and it isn't done;
+    otherwise In Progress (covers To Do / In Progress / In Review)."""
+    if task["status"] == "done":
+        return "completed"
+    today = today or dt.date.today()
+    due = task.get("due_date")
+    if due and due < today.isoformat():
+        return "overdue"
+    return "in_progress"
+
+
+def colorize(text: str, category: str) -> str:
+    """Wrap `text` in Streamlit markdown colour syntax for the given category."""
+    color = TASK_CATEGORY_COLORS.get(category)
+    return f":{color}[{text}]" if color else text
+
+
+def task_date_label(task: dict) -> str:
+    """'Completed: <date>' for done tasks, else 'Due: <date>'."""
+    if task["status"] == "done":
+        done_on = (task.get("completed_at") or "")[:10]
+        return f"Completed: {done_on or '—'}"
+    return f"Due: {task.get('due_date') or '—'}"
 
 
 def name_to_id_map(profiles: list) -> dict:
