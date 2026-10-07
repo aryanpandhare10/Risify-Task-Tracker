@@ -1,3 +1,5 @@
+import datetime as dt
+
 import pandas as pd
 import streamlit as st
 
@@ -18,15 +20,6 @@ logout_button()
 st.title("Dashboard")
 
 projects = list_projects()
-my_tasks = list_tasks(assignee_id=profile["id"])
-
-col1, col2, col3 = st.columns(3)
-col1.metric("Projects", len(projects))
-col2.metric("My open tasks", len([t for t in my_tasks if t["status"] != "done"]))
-col3.metric("My completed tasks", len([t for t in my_tasks if t["status"] == "done"]))
-
-st.divider()
-st.subheader("All projects")
 
 if not projects:
     st.info("No projects yet. Open **Projects** in the sidebar to create one.")
@@ -36,8 +29,83 @@ all_profiles = list_profiles()
 id_to_name = {pr["id"]: pr["full_name"] for pr in all_profiles}
 name_to_id = {v: k for k, v in id_to_name.items()}
 
-# Fetch every project's tasks once and reuse below (progress cards + admin analytics).
+# Fetch every project's tasks once and reuse below (overview, progress cards + admin analytics).
 tasks_by_project = {p["id"]: list_tasks(project_id=p["id"]) for p in projects}
+
+# =====================================================================
+# Project overview — shown first. One collapsible row per project; expanding
+# it shows the project's main tasks grouped into In Progress / Completed /
+# Overdue, each card listing its sub-tasks coloured by their own category.
+# =====================================================================
+st.subheader("📋 Project Overview")
+today = dt.date.today()
+
+
+def _due_sort_key(t: dict):
+    return (t.get("due_date") is None, t.get("due_date") or "")
+
+
+for p in projects:
+    proj_tasks = tasks_by_project[p["id"]]
+    main_tasks = [t for t in proj_tasks if not t.get("parent_id")]
+    subtasks_by_parent: dict = {}
+    for t in proj_tasks:
+        if t.get("parent_id"):
+            subtasks_by_parent.setdefault(t["parent_id"], []).append(t)
+
+    by_category = {c: [] for c in utils.TASK_CATEGORIES}
+    for t in main_tasks:
+        by_category[utils.task_category(t, today)].append(t)
+
+    counts = " · ".join(
+        utils.colorize(f"{len(by_category[c])} {utils.TASK_CATEGORY_LABELS[c]}", c)
+        for c in utils.TASK_CATEGORIES
+    )
+    with st.expander(f"**{p['key']}** — {p['name']}  |  {counts}"):
+        if not main_tasks:
+            st.caption("No tasks in this project yet.")
+            continue
+
+        section_cols = st.columns(len(utils.TASK_CATEGORIES))
+        for col, cat in zip(section_cols, utils.TASK_CATEGORIES):
+            with col:
+                st.markdown(
+                    f"#### {utils.colorize(utils.TASK_CATEGORY_LABELS[cat], cat)} "
+                    f"({len(by_category[cat])})"
+                )
+                if not by_category[cat]:
+                    st.caption("None")
+                for t in sorted(by_category[cat], key=_due_sort_key):
+                    with st.container(border=True):
+                        st.markdown(f"**{utils.colorize(t['title'], cat)}**")
+                        st.caption(utils.task_date_label(t))
+                        st.markdown(
+                            "Status: "
+                            + utils.colorize(utils.STATUS_LABELS.get(t["status"], t["status"]), cat)
+                        )
+                        subtasks = sorted(subtasks_by_parent.get(t["id"], []), key=_due_sort_key)
+                        if subtasks:
+                            st.caption(f"Sub-tasks ({len(subtasks)})")
+                            for s in subtasks:
+                                s_cat = utils.task_category(s, today)
+                                st.markdown(
+                                    f"↳ {utils.colorize(s['title'], s_cat)}  \n"
+                                    f"<small>{utils.STATUS_LABELS.get(s['status'], s['status'])}"
+                                    f" · {utils.task_date_label(s)}</small>",
+                                    unsafe_allow_html=True,
+                                )
+
+st.divider()
+
+my_tasks = list_tasks(assignee_id=profile["id"])
+
+col1, col2, col3 = st.columns(3)
+col1.metric("Projects", len(projects))
+col2.metric("My open tasks", len([t for t in my_tasks if t["status"] != "done"]))
+col3.metric("My completed tasks", len([t for t in my_tasks if t["status"] == "done"]))
+
+st.divider()
+st.subheader("All projects")
 
 for p in projects:
     prog = utils.project_progress(tasks_by_project[p["id"]], rollup=True)
