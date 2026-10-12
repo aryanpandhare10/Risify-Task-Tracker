@@ -4,7 +4,11 @@ import pandas as pd
 import streamlit as st
 
 from auth import require_login, logout_button
-from db import list_projects, list_tasks, list_profiles, update_project
+from db import (
+    list_projects, list_tasks, list_profiles, update_project,
+    list_licenses, create_license, update_license, delete_license,
+)
+import notify
 import utils
 
 st.set_page_config(page_title="Jira-lite", page_icon="🔷", layout="wide")
@@ -18,6 +22,22 @@ st.sidebar.caption(profile["role"].title())
 logout_button()
 
 st.title("Dashboard")
+
+# License reminders — anything expired or expiring within a week is flagged
+# here on every dashboard load, and emailed once (if SMTP is configured).
+licenses = list_licenses()
+for lic in licenses:
+    cat = utils.license_category(lic)
+    if cat == "active":
+        continue
+    days = utils.license_days_left(lic)
+    label = lic["name"] + (f" ({lic['vendor']})" if lic.get("vendor") else "")
+    if cat == "expired":
+        st.error(f"🔑 License **{label}** expired on {lic['expiry_date']} ({-days} day(s) ago).")
+    else:
+        when = "today" if days == 0 else f"in {days} day(s)"
+        st.warning(f"🔑 License **{label}** expires {when} ({lic['expiry_date']}).")
+notify.send_license_reminders(licenses)
 
 projects = list_projects()
 
@@ -89,6 +109,88 @@ else:
         st.dataframe(
             tasks_df.style.apply(_category_colors, subset=["Due / Completed", "Status"]),
             use_container_width=True, hide_index=True,
+        )
+
+# =====================================================================
+# License expiry — manually maintained list of licenses and their next
+# expiry date. Orange = expiring within a week, red = expired.
+# =====================================================================
+st.subheader("🔑 License Expiry")
+
+if not licenses:
+    st.caption("No licenses tracked yet. Add one below.")
+else:
+    license_categories = [utils.license_category(lic, today) for lic in licenses]
+    licenses_df = pd.DataFrame([{
+        "License": lic["name"],
+        "Vendor": lic.get("vendor") or "—",
+        "Expiry date": lic["expiry_date"],
+        "Days left": utils.license_days_left(lic, today),
+        "Notes": lic.get("notes") or "",
+    } for lic in licenses])
+
+    def _license_colors(col: pd.Series) -> list:
+        return [
+            f"color: {utils.LICENSE_CATEGORY_COLORS[c]}" if utils.LICENSE_CATEGORY_COLORS[c] else ""
+            for c in license_categories
+        ]
+
+    st.dataframe(
+        licenses_df.style.apply(_license_colors, subset=["Expiry date", "Days left"]),
+        use_container_width=True, hide_index=True,
+    )
+
+with st.expander("➕ Add / edit licenses"):
+    with st.form("new_license", clear_on_submit=True):
+        lcol1, lcol2, lcol3 = st.columns(3)
+        lic_name = lcol1.text_input("License name")
+        lic_vendor = lcol2.text_input("Vendor (optional)")
+        lic_expiry = lcol3.date_input("Next expiry date", value=None)
+        lic_notes = st.text_input("Notes (optional)")
+        lic_submitted = st.form_submit_button("Add license")
+    if lic_submitted:
+        if not lic_name or not lic_expiry:
+            st.error("License name and expiry date are required.")
+        else:
+            create_license(lic_name, lic_vendor, lic_expiry.isoformat(), lic_notes, profile["id"])
+            st.rerun()
+
+    if licenses:
+        st.divider()
+        lic_by_label = {
+            f"{lic['name']} — {lic['expiry_date']}": lic for lic in licenses
+        }
+        edit_label = st.selectbox("Edit an existing license", list(lic_by_label.keys()))
+        edit_lic = lic_by_label[edit_label]
+        k = edit_lic["id"]
+        ecol1, ecol2, ecol3 = st.columns(3)
+        edit_name = ecol1.text_input("License name", value=edit_lic["name"], key=f"lic_name_{k}")
+        edit_vendor = ecol2.text_input("Vendor", value=edit_lic.get("vendor") or "", key=f"lic_vendor_{k}")
+        edit_expiry = ecol3.date_input(
+            "Next expiry date", value=dt.date.fromisoformat(edit_lic["expiry_date"]),
+            key=f"lic_expiry_{k}",
+        )
+        edit_notes = st.text_input("Notes", value=edit_lic.get("notes") or "", key=f"lic_notes_{k}")
+
+        bcol1, bcol2, bcol3 = st.columns([1, 2, 1])
+        if bcol1.button("💾 Save license", key=f"lic_save_{k}"):
+            if not edit_name or not edit_expiry:
+                st.error("License name and expiry date are required.")
+            else:
+                update_license(
+                    k, name=edit_name.strip(), vendor=edit_vendor.strip() or None,
+                    expiry_date=edit_expiry.isoformat(), notes=edit_notes.strip() or None,
+                )
+                st.rerun()
+        confirm_lic_delete = bcol2.checkbox("Confirm delete this license", key=f"lic_confirm_del_{k}")
+        if bcol3.button("🗑️ Delete", key=f"lic_del_{k}", disabled=not confirm_lic_delete):
+            delete_license(k)
+            st.rerun()
+
+    if not notify.email_enabled():
+        st.caption(
+            "Email reminders are off — add the SMTP_* settings to secrets.toml to "
+            f"email {notify.DEFAULT_REMINDER_TO} when a license is within a week of expiry."
         )
 
 st.divider()
