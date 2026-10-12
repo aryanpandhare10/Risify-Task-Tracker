@@ -209,6 +209,59 @@ def create_comment(task_id: str, user_id: str, body: str) -> dict:
 
 
 # ---------------------------------------------------------------
+# Licenses
+# ---------------------------------------------------------------
+def list_licenses() -> list:
+    sb = get_client()
+    return sb.table("licenses").select("*").order("expiry_date").execute().data
+
+
+def create_license(name: str, vendor: str, expiry_date: str, notes: str, created_by: str) -> dict:
+    sb = get_client()
+    res = sb.table("licenses").insert(
+        {
+            "name": name.strip(),
+            "vendor": vendor.strip() or None,
+            "expiry_date": expiry_date,
+            "notes": notes.strip() or None,
+            "created_by": created_by,
+        }
+    ).execute()
+    return res.data[0]
+
+
+def update_license(license_id: str, **fields) -> dict:
+    sb = get_client()
+    res = sb.table("licenses").update(fields).eq("id", license_id).execute()
+    return res.data[0]
+
+
+def delete_license(license_id: str) -> None:
+    sb = get_client()
+    sb.table("licenses").delete().eq("id", license_id).execute()
+
+
+def claim_license_reminder(license_id: str, expiry_date: str) -> bool:
+    """Atomically mark a license's reminder as sent for this expiry date.
+    Returns True only for the one caller that flipped it, so concurrent
+    sessions don't send duplicate emails."""
+    sb = get_client()
+    res = (
+        sb.table("licenses")
+        .update({"reminder_sent_for": expiry_date})
+        .eq("id", license_id)
+        .or_(f"reminder_sent_for.is.null,reminder_sent_for.neq.{expiry_date}")
+        .execute()
+    )
+    return bool(res.data)
+
+
+def release_license_reminder(license_id: str) -> None:
+    """Undo a claim when the email failed to send, so it is retried later."""
+    update_license(license_id, reminder_sent_for=None)
+
+
+# ---------------------------------------------------------------
 # Activity / Reports -- "what did a user do in period X"
 # ---------------------------------------------------------------
 def get_user_activity(user_id: str, start: dt.date, end: dt.date) -> list:
