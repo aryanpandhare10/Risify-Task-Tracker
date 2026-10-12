@@ -24,9 +24,12 @@ create table if not exists projects (
   key                text unique not null,          -- e.g. "ENG"
   name               text not null,
   description        text,
-  lead_id            uuid references profiles(id),
+  lead_id            uuid references profiles(id),   -- primary owner
   created_by         uuid references profiles(id),
   next_task_number   int not null default 1,        -- used to mint task_key values
+  priority           text not null default 'medium' check (priority in ('lowest','low','medium','high','highest')),
+  completion_date    text,                            -- free-text "next task completion"
+  project_completion_date text,                       -- free-text overall project completion date
   created_at         timestamptz not null default now()
 );
 
@@ -92,6 +95,22 @@ create table if not exists comments (
   body        text not null,
   created_at  timestamptz not null default now()
 );
+
+-- ---------------------------------------------------------------
+-- LICENSES - manually tracked software/service licenses and expiries
+-- ---------------------------------------------------------------
+create table if not exists licenses (
+  id                 uuid primary key default gen_random_uuid(),
+  name               text not null,
+  vendor             text,
+  expiry_date        date not null,
+  notes              text,
+  reminder_sent_for  date,           -- expiry_date an email reminder was already sent for
+  created_by         uuid references profiles(id),
+  created_at         timestamptz not null default now()
+);
+
+create index if not exists idx_licenses_expiry on licenses(expiry_date);
 
 -- ============================================================
 -- TRIGGERS
@@ -199,6 +218,7 @@ alter table project_members enable row level security;
 alter table tasks          enable row level security;
 alter table task_activity  enable row level security;
 alter table comments       enable row level security;
+alter table licenses       enable row level security;
 
 create policy "profiles_select" on profiles for select to authenticated using (true);
 create policy "profiles_insert_self" on profiles for insert to authenticated with check (auth.uid() = id);
@@ -210,6 +230,7 @@ create policy "tasks_all" on tasks for all to authenticated using (true) with ch
 create policy "task_activity_select" on task_activity for select to authenticated using (true);
 create policy "task_activity_insert" on task_activity for insert to authenticated with check (true);
 create policy "comments_all" on comments for all to authenticated using (true) with check (true);
+create policy "licenses_all" on licenses for all to authenticated using (true) with check (true);
 
 -- ============================================================
 -- MIGRATION: add estimate_hours to an already-existing tasks table.
@@ -224,3 +245,10 @@ alter table tasks add constraint tasks_estimate_hours_check check (estimate_hour
 alter table tasks add column if not exists logged_hours numeric not null default 0;
 alter table tasks drop constraint if exists tasks_logged_hours_check;
 alter table tasks add constraint tasks_logged_hours_check check (logged_hours >= 0);
+
+alter table projects add column if not exists priority text not null default 'medium';
+alter table projects drop constraint if exists projects_priority_check;
+alter table projects add constraint projects_priority_check
+  check (priority in ('lowest','low','medium','high','highest'));
+alter table projects add column if not exists completion_date text;
+alter table projects add column if not exists project_completion_date text;
