@@ -60,6 +60,31 @@ def task_date_label(task: dict) -> str:
     return f"Due: {task.get('due_date') or '—'}"
 
 
+# Licenses expiring within this many days trigger a portal/email reminder.
+LICENSE_REMINDER_DAYS = 7
+LICENSE_CATEGORY_COLORS = {
+    "active": None,
+    "expiring": "orange",
+    "expired": "red",
+}
+
+
+def license_days_left(lic: dict, today: dt.date = None) -> int:
+    today = today or dt.date.today()
+    return (dt.date.fromisoformat(lic["expiry_date"]) - today).days
+
+
+def license_category(lic: dict, today: dt.date = None) -> str:
+    """Expired if the expiry date has passed; Expiring if within
+    LICENSE_REMINDER_DAYS; otherwise Active."""
+    days = license_days_left(lic, today)
+    if days < 0:
+        return "expired"
+    if days <= LICENSE_REMINDER_DAYS:
+        return "expiring"
+    return "active"
+
+
 def name_to_id_map(profiles: list) -> dict:
     return {p["full_name"]: p["id"] for p in profiles}
 
