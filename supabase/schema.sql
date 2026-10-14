@@ -105,7 +105,8 @@ create table if not exists digital_assets (
   entity              text not null,
   service_type        text not null check (service_type in ('server','domain','email','vendor_payment','others')),
   service_type_other  text,           -- free-text type when service_type = 'others'
-  billing_cycle       text not null check (billing_cycle in ('monthly','quarterly','semi_annually','annually')),
+  owner_id            uuid references profiles(id),
+  billing_cycle      text not null check (billing_cycle in ('monthly','quarterly','semi_annually','annually')),
   invoice_amount      numeric not null default 0 check (invoice_amount >= 0),
   due_date            date not null,
   reminder_sent_for   date,           -- due_date an email reminder was already sent for
@@ -255,3 +256,5 @@ alter table projects add constraint projects_priority_check
   check (priority in ('lowest','low','medium','high','highest'));
 alter table projects add column if not exists completion_date text;
 alter table projects add column if not exists project_completion_date text;
+
+alter table digital_assets add column if not exists owner_id uuid references profiles(id);
