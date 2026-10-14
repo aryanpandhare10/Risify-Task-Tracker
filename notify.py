@@ -78,8 +78,9 @@ def send_payment_reminders(assets: list) -> None:
         label = utils.asset_label(a)
         body = (
             f"Payment reminder from the Risify Task Tracker:\n\n"
-            f"  Entity:         {a['entity']}\n"
             f"  Service type:   {utils.service_type_label(a)}\n"
+            f"  Entity:         {a['entity']}\n"
+            f"  Owner:          {(a.get('owner') or {}).get('full_name') or 'Unassigned'}\n"
             f"  Billing cycle:  {utils.BILLING_CYCLE_LABELS.get(a['billing_cycle'], a['billing_cycle'])}\n"
             f"  Invoice amount: {float(a.get('invoice_amount') or 0):,.2f}\n"
             f"  Due date:       {a['due_date']} ({when})\n"
