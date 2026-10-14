@@ -209,56 +209,66 @@ def create_comment(task_id: str, user_id: str, body: str) -> dict:
 
 
 # ---------------------------------------------------------------
-# Licenses
+# Digital assets payment tracker
 # ---------------------------------------------------------------
-def list_licenses() -> list:
+def list_digital_assets() -> list:
     sb = get_client()
-    return sb.table("licenses").select("*").order("expiry_date").execute().data
+    return sb.table("digital_assets").select("*").order("due_date").execute().data
 
 
-def create_license(name: str, vendor: str, expiry_date: str, notes: str, created_by: str) -> dict:
+def create_digital_asset(
+    entity: str,
+    service_type: str,
+    service_type_other: Optional[str],
+    billing_cycle: str,
+    invoice_amount: float,
+    due_date: str,
+    created_by: str,
+) -> dict:
     sb = get_client()
-    res = sb.table("licenses").insert(
+    res = sb.table("digital_assets").insert(
         {
-            "name": name.strip(),
-            "vendor": vendor.strip() or None,
-            "expiry_date": expiry_date,
-            "notes": notes.strip() or None,
+            "entity": entity.strip(),
+            "service_type": service_type,
+            "service_type_other": service_type_other,
+            "billing_cycle": billing_cycle,
+            "invoice_amount": invoice_amount,
+            "due_date": due_date,
             "created_by": created_by,
         }
     ).execute()
     return res.data[0]
 
 
-def update_license(license_id: str, **fields) -> dict:
+def update_digital_asset(asset_id: str, **fields) -> dict:
     sb = get_client()
-    res = sb.table("licenses").update(fields).eq("id", license_id).execute()
+    res = sb.table("digital_assets").update(fields).eq("id", asset_id).execute()
     return res.data[0]
 
 
-def delete_license(license_id: str) -> None:
+def delete_digital_asset(asset_id: str) -> None:
     sb = get_client()
-    sb.table("licenses").delete().eq("id", license_id).execute()
+    sb.table("digital_assets").delete().eq("id", asset_id).execute()
 
 
-def claim_license_reminder(license_id: str, expiry_date: str) -> bool:
-    """Atomically mark a license's reminder as sent for this expiry date.
+def claim_asset_reminder(asset_id: str, due_date: str) -> bool:
+    """Atomically mark an asset's reminder as sent for this due date.
     Returns True only for the one caller that flipped it, so concurrent
     sessions don't send duplicate emails."""
     sb = get_client()
     res = (
-        sb.table("licenses")
-        .update({"reminder_sent_for": expiry_date})
-        .eq("id", license_id)
-        .or_(f"reminder_sent_for.is.null,reminder_sent_for.neq.{expiry_date}")
+        sb.table("digital_assets")
+        .update({"reminder_sent_for": due_date})
+        .eq("id", asset_id)
+        .or_(f"reminder_sent_for.is.null,reminder_sent_for.neq.{due_date}")
         .execute()
     )
     return bool(res.data)
 
 
-def release_license_reminder(license_id: str) -> None:
+def release_asset_reminder(asset_id: str) -> None:
     """Undo a claim when the email failed to send, so it is retried later."""
-    update_license(license_id, reminder_sent_for=None)
+    update_digital_asset(asset_id, reminder_sent_for=None)
 
 
 # ---------------------------------------------------------------
