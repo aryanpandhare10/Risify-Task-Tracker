@@ -1,19 +1,19 @@
 """
-Email reminders for expiring licenses, sent over plain SMTP (e.g. a Gmail /
-Google Workspace or Outlook / Microsoft 365 mailbox with an app password), so
-no paid email service is needed.
+Email reminders for digital-asset invoices due within a week, sent over plain
+SMTP (e.g. a Gmail / Google Workspace or Outlook / Microsoft 365 mailbox with
+an app password), so no paid email service is needed.
 
 Optional: if the SMTP_* secrets aren't set, reminders are shown on the portal
 only and no email is attempted. Reminders go out when someone opens the
-dashboard (Streamlit has no background scheduler), at most once per license
-per expiry date.
+dashboard (Streamlit has no background scheduler), at most once per item per
+due date.
 """
 import smtplib
 from email.message import EmailMessage
 
 import streamlit as st
 
-from db import claim_license_reminder, release_license_reminder
+from db import claim_asset_reminder, release_asset_reminder
 import utils
 
 DEFAULT_REMINDER_TO = "aryaan.pandhare@risify.ai"
@@ -30,7 +30,10 @@ def _smtp_config():
             "user": secrets["SMTP_USER"],
             "password": secrets["SMTP_PASSWORD"],
             "sender": secrets.get("SMTP_FROM", secrets["SMTP_USER"]),
-            "to": secrets.get("LICENSE_REMINDER_TO", DEFAULT_REMINDER_TO),
+            # LICENSE_REMINDER_TO is the older name for this setting; still honoured.
+            "to": secrets.get("PAYMENT_REMINDER_TO")
+            or secrets.get("LICENSE_REMINDER_TO")
+            or DEFAULT_REMINDER_TO,
         }
     except Exception:
         return None
@@ -56,37 +59,35 @@ def _send(cfg: dict, subject: str, body: str) -> None:
         server.send_message(msg)
 
 
-def send_license_reminders(licenses: list) -> None:
-    """Email one reminder per license that is expired or expiring within
-    LICENSE_REMINDER_DAYS and hasn't been reminded for its current expiry date."""
+def send_payment_reminders(assets: list) -> None:
+    """Email one reminder per item that is overdue or due within
+    ASSET_REMINDER_DAYS and hasn't been reminded for its current due date."""
     cfg = _smtp_config()
     if cfg is None:
         return
 
-    for lic in licenses:
-        if utils.license_category(lic) == "active":
+    for a in assets:
+        if utils.asset_status(a) == "upcoming":
             continue
-        if lic.get("reminder_sent_for") == lic["expiry_date"]:
+        if a.get("reminder_sent_for") == a["due_date"]:
             continue
-        if not claim_license_reminder(lic["id"], lic["expiry_date"]):
+        if not claim_asset_reminder(a["id"], a["due_date"]):
             continue  # another session already sent it
 
-        days = utils.license_days_left(lic)
-        when = f"expired {-days} day(s) ago" if days < 0 else (
-            "expires today" if days == 0 else f"expires in {days} day(s)"
-        )
-        label = lic["name"] + (f" ({lic['vendor']})" if lic.get("vendor") else "")
+        when = utils.due_when(utils.asset_days_left(a))
+        label = utils.asset_label(a)
         body = (
-            f"License reminder from the Risify Task Tracker:\n\n"
-            f"  {label}\n"
-            f"  Expiry date: {lic['expiry_date']} — {when}\n"
+            f"Payment reminder from the Risify Task Tracker:\n\n"
+            f"  Entity:         {a['entity']}\n"
+            f"  Service type:   {utils.service_type_label(a)}\n"
+            f"  Billing cycle:  {utils.BILLING_CYCLE_LABELS.get(a['billing_cycle'], a['billing_cycle'])}\n"
+            f"  Invoice amount: {float(a.get('invoice_amount') or 0):,.2f}\n"
+            f"  Due date:       {a['due_date']} ({when})\n"
+            "\nOnce paid, use \"Mark paid\" on the dashboard to roll it to the next due date.\n"
         )
-        if lic.get("notes"):
-            body += f"  Notes: {lic['notes']}\n"
-        body += "\nUpdate the expiry date on the dashboard once it has been renewed.\n"
 
         try:
-            _send(cfg, f"License {when}: {label}", body)
+            _send(cfg, f"Invoice {when}: {label}", body)
         except Exception as e:
-            release_license_reminder(lic["id"])
-            st.toast(f"Couldn't send license reminder email: {e}", icon="⚠️")
+            release_asset_reminder(a["id"])
+            st.toast(f"Couldn't send payment reminder email: {e}", icon="⚠️")
