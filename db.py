@@ -213,13 +213,20 @@ def create_comment(task_id: str, user_id: str, body: str) -> dict:
 # ---------------------------------------------------------------
 def list_digital_assets() -> list:
     sb = get_client()
-    return sb.table("digital_assets").select("*").order("due_date").execute().data
+    return (
+        sb.table("digital_assets")
+        .select("*, owner:profiles!digital_assets_owner_id_fkey(full_name)")
+        .order("due_date")
+        .execute()
+        .data
+    )
 
 
 def create_digital_asset(
-    entity: str,
     service_type: str,
     service_type_other: Optional[str],
+    entity: str,
+    owner_id: Optional[str],
     billing_cycle: str,
     invoice_amount: float,
     due_date: str,
@@ -228,9 +235,10 @@ def create_digital_asset(
     sb = get_client()
     res = sb.table("digital_assets").insert(
         {
-            "entity": entity.strip(),
             "service_type": service_type,
             "service_type_other": service_type_other,
+            "entity": entity.strip(),
+            "owner_id": owner_id,
             "billing_cycle": billing_cycle,
             "invoice_amount": invoice_amount,
             "due_date": due_date,
