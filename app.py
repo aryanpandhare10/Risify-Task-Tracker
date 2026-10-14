@@ -116,72 +116,24 @@ else:
 # =====================================================================
 # Digital assets payment tracker — manually maintained list of recurring
 # invoices (servers, domains, email, vendors, ...). S.No. is numbered after
-# filtering so it always gives the count of what's shown.
-# Orange = due within a week, red = overdue.
+# filtering so it always gives the count of what's shown. Click a row to
+# edit it. Orange = due within a week, red = overdue.
 # =====================================================================
 st.subheader("💳 Digital Assets Payment Tracker")
 
 if "da_flash" in st.session_state:
     st.success(st.session_state.pop("da_flash"))
 
-if not assets:
-    st.caption("No payments tracked yet. Add one below.")
-else:
-    with st.expander("🔎 Filters"):
-        entity_choices = sorted({a["entity"] for a in assets})
-        f_entity = st.selectbox("Entity", ["All entities"] + entity_choices, key="da_f_entity")
-        f_service = utils.checkbox_filter(
-            st, "Service type", utils.SERVICE_TYPE_OPTIONS, key_prefix="da_f_service",
-            format_func=lambda s: utils.SERVICE_TYPE_LABELS[s], per_row=5,
-        )
-        f_cycle = utils.checkbox_filter(
-            st, "Billing cycle", utils.BILLING_CYCLE_OPTIONS, key_prefix="da_f_cycle",
-            format_func=lambda c: utils.BILLING_CYCLE_LABELS[c],
-        )
-        f_status = utils.checkbox_filter(
-            st, "Status", list(utils.ASSET_STATUS_LABELS), key_prefix="da_f_status",
-            format_func=lambda s: utils.ASSET_STATUS_LABELS[s],
-        )
+owner_ids = [None] + list(id_to_name)
 
-    shown_assets = [
-        a for a in assets
-        if (f_entity == "All entities" or a["entity"] == f_entity)
-        and a["service_type"] in f_service
-        and a["billing_cycle"] in f_cycle
-        and utils.asset_status(a, today) in f_status
-    ]
 
-    if not shown_assets:
-        st.caption(f"No payments match the filters (0 of {len(assets)}).")
-    else:
-        asset_statuses = [utils.asset_status(a, today) for a in shown_assets]
-        assets_df = pd.DataFrame([{
-            "S.No.": i,
-            "Entity": a["entity"],
-            "Service type": utils.service_type_label(a),
-            "Billing cycle": utils.BILLING_CYCLE_LABELS.get(a["billing_cycle"], a["billing_cycle"]),
-            "Invoice amount": float(a.get("invoice_amount") or 0),
-            "Invoice due date": a["due_date"],
-            "Days left": utils.asset_days_left(a, today),
-            "Status": utils.ASSET_STATUS_LABELS[s],
-        } for i, (a, s) in enumerate(zip(shown_assets, asset_statuses), start=1)])
+def _owner_name(owner_id) -> str:
+    return id_to_name.get(owner_id, "Unassigned") if owner_id else "Unassigned"
 
-        def _asset_colors(col: pd.Series) -> list:
-            return [
-                f"color: {utils.ASSET_STATUS_COLORS[s]}" if utils.ASSET_STATUS_COLORS[s] else ""
-                for s in asset_statuses
-            ]
 
-        st.dataframe(
-            assets_df.style
-            .apply(_asset_colors, subset=["Invoice due date", "Days left", "Status"])
-            .format({"Invoice amount": "{:,.2f}"}),
-            use_container_width=True, hide_index=True,
-        )
-        st.caption(
-            f"Showing {len(shown_assets)} of {len(assets)} · "
-            f"Total invoice amount: {assets_df['Invoice amount'].sum():,.2f}"
-        )
+def _reset_table_selection() -> None:
+    # A new table key drops the old row selection (rows shift after edits).
+    st.session_state["da_table_ver"] = st.session_state.get("da_table_ver", 0) + 1
 
 
 def _add_asset() -> None:
@@ -198,101 +150,185 @@ def _add_asset() -> None:
         )
         return
     create_digital_asset(
-        entity, service, other if service == "others" else None,
+        service, other if service == "others" else None, entity, ss["da_new_owner"],
         ss["da_new_cycle"], ss["da_new_amount"], due.isoformat(), profile["id"],
     )
     ss["da_new_entity"] = ""
     ss["da_new_other"] = ""
+    ss["da_new_owner"] = None
     ss["da_new_amount"] = 0.0
     ss["da_new_due"] = None
     ss["da_flash"] = f"Added {entity}."
+    _reset_table_selection()
 
 
 def _mark_paid(asset: dict) -> None:
     """Button callback: roll the due date forward by one billing cycle."""
     nxt = utils.next_due_date(dt.date.fromisoformat(asset["due_date"]), asset["billing_cycle"])
     update_digital_asset(asset["id"], due_date=nxt.isoformat())
-    st.session_state.pop(f"da_due_{asset['id']}", None)  # show the new date in the edit field
     st.session_state["da_flash"] = f"Marked {utils.asset_label(asset)} paid — next due {nxt}."
+    _reset_table_selection()
 
 
-with st.expander("➕ Add / edit payments"):
+if not assets:
+    st.caption("No payments tracked yet. Add one below.")
+else:
+    with st.expander("🔎 Filters"):
+        fcol1, fcol2 = st.columns(2)
+        entity_choices = sorted({a["entity"] for a in assets})
+        f_entity = fcol1.selectbox("Entity", ["All entities"] + entity_choices, key="da_f_entity")
+        owner_choices = sorted({_owner_name(a.get("owner_id")) for a in assets})
+        f_owner = fcol2.selectbox("Owner", ["All owners"] + owner_choices, key="da_f_owner")
+        f_service = utils.checkbox_filter(
+            st, "Service type", utils.SERVICE_TYPE_OPTIONS, key_prefix="da_f_service",
+            format_func=lambda s: utils.SERVICE_TYPE_LABELS[s], per_row=5,
+        )
+        f_cycle = utils.checkbox_filter(
+            st, "Billing cycle", utils.BILLING_CYCLE_OPTIONS, key_prefix="da_f_cycle",
+            format_func=lambda c: utils.BILLING_CYCLE_LABELS[c],
+        )
+        f_status = utils.checkbox_filter(
+            st, "Status", list(utils.ASSET_STATUS_LABELS), key_prefix="da_f_status",
+            format_func=lambda s: utils.ASSET_STATUS_LABELS[s],
+        )
+
+    shown_assets = [
+        a for a in assets
+        if (f_entity == "All entities" or a["entity"] == f_entity)
+        and (f_owner == "All owners" or _owner_name(a.get("owner_id")) == f_owner)
+        and a["service_type"] in f_service
+        and a["billing_cycle"] in f_cycle
+        and utils.asset_status(a, today) in f_status
+    ]
+
+    if not shown_assets:
+        st.caption(f"No payments match the filters (0 of {len(assets)}).")
+    else:
+        asset_statuses = [utils.asset_status(a, today) for a in shown_assets]
+        assets_df = pd.DataFrame([{
+            "S.No.": i,
+            "Service type": utils.service_type_label(a),
+            "Entity": a["entity"],
+            "Owner": _owner_name(a.get("owner_id")),
+            "Billing cycle": utils.BILLING_CYCLE_LABELS.get(a["billing_cycle"], a["billing_cycle"]),
+            "Invoice amount": float(a.get("invoice_amount") or 0),
+            "Invoice due date": a["due_date"],
+            "Days left": utils.asset_days_left(a, today),
+            "Status": utils.ASSET_STATUS_LABELS[s],
+        } for i, (a, s) in enumerate(zip(shown_assets, asset_statuses), start=1)])
+
+        def _asset_colors(col: pd.Series) -> list:
+            return [
+                f"color: {utils.ASSET_STATUS_COLORS[s]}" if utils.ASSET_STATUS_COLORS[s] else ""
+                for s in asset_statuses
+            ]
+
+        asset_event = st.dataframe(
+            assets_df.style
+            .apply(_asset_colors, subset=["Invoice due date", "Days left", "Status"])
+            .format({"Invoice amount": "{:,.2f}"}),
+            use_container_width=True, hide_index=True,
+            on_select="rerun", selection_mode="single-row",
+            key=f"da_table_{st.session_state.get('da_table_ver', 0)}",
+        )
+        st.caption(
+            f"Showing {len(shown_assets)} of {len(assets)} · "
+            f"Total invoice amount: {assets_df['Invoice amount'].sum():,.2f} · "
+            "Click a row to edit it."
+        )
+
+        # -------- Edit the clicked row --------
+        sel_rows = asset_event.selection.rows
+        if sel_rows and sel_rows[0] < len(shown_assets):
+            ea = shown_assets[sel_rows[0]]
+            k = ea["id"]
+            with st.container(border=True):
+                st.markdown(f"**✏️ Edit payment #{sel_rows[0] + 1} — {utils.asset_label(ea)}**")
+
+                ecol1, ecol2, ecol3 = st.columns(3)
+                edit_service = ecol1.selectbox(
+                    "Service type", utils.SERVICE_TYPE_OPTIONS,
+                    index=utils.SERVICE_TYPE_OPTIONS.index(ea["service_type"]),
+                    format_func=lambda s: utils.SERVICE_TYPE_LABELS[s], key=f"da_service_{k}",
+                )
+                edit_other = ""
+                if edit_service == "others":
+                    edit_other = ecol2.text_input(
+                        "Specify service type", value=ea.get("service_type_other") or "",
+                        key=f"da_other_{k}",
+                    )
+                edit_entity = ecol3.text_input("Entity", value=ea["entity"], key=f"da_entity_{k}")
+
+                fcol1, fcol2, fcol3, fcol4 = st.columns(4)
+                edit_owner = fcol1.selectbox(
+                    "Owner", owner_ids,
+                    index=owner_ids.index(ea.get("owner_id")) if ea.get("owner_id") in owner_ids else 0,
+                    format_func=_owner_name, key=f"da_owner_{k}",
+                )
+                edit_cycle = fcol2.selectbox(
+                    "Billing cycle", utils.BILLING_CYCLE_OPTIONS,
+                    index=utils.BILLING_CYCLE_OPTIONS.index(ea["billing_cycle"]),
+                    format_func=lambda c: utils.BILLING_CYCLE_LABELS[c], key=f"da_cycle_{k}",
+                )
+                edit_amount = fcol3.number_input(
+                    "Invoice amount", min_value=0.0, step=100.0, format="%.2f",
+                    value=float(ea.get("invoice_amount") or 0), key=f"da_amount_{k}",
+                )
+                edit_due = fcol4.date_input(
+                    "Invoice due date", value=dt.date.fromisoformat(ea["due_date"]),
+                    key=f"da_due_{k}_{ea['due_date']}",  # fresh field after "Mark paid"
+                )
+
+                gcol1, gcol2, gcol3, gcol4 = st.columns([1, 1.6, 1.6, 1])
+                if gcol1.button("💾 Save", key=f"da_save_{k}"):
+                    if not edit_entity.strip() or not edit_due or (
+                        edit_service == "others" and not edit_other.strip()
+                    ):
+                        st.error("Entity and invoice due date are required (and the service type for Others).")
+                    else:
+                        update_digital_asset(
+                            k, service_type=edit_service,
+                            service_type_other=edit_other.strip() if edit_service == "others" else None,
+                            entity=edit_entity.strip(), owner_id=edit_owner,
+                            billing_cycle=edit_cycle, invoice_amount=edit_amount,
+                            due_date=edit_due.isoformat(),
+                        )
+                        st.session_state["da_flash"] = f"Saved {edit_entity.strip()}."
+                        _reset_table_selection()
+                        st.rerun()
+                gcol2.button(
+                    "✅ Mark paid → next due date", key=f"da_paid_{k}", on_click=_mark_paid, args=(ea,),
+                    help=f"Moves the due date forward one "
+                         f"{utils.BILLING_CYCLE_LABELS[ea['billing_cycle']].lower()} cycle, to "
+                         f"{utils.next_due_date(dt.date.fromisoformat(ea['due_date']), ea['billing_cycle'])}.",
+                )
+                confirm_da_delete = gcol3.checkbox("Confirm delete this payment", key=f"da_confirm_del_{k}")
+                if gcol4.button("🗑️ Delete", key=f"da_del_{k}", disabled=not confirm_da_delete):
+                    delete_digital_asset(k)
+                    st.session_state["da_flash"] = f"Deleted {utils.asset_label(ea)}."
+                    _reset_table_selection()
+                    st.rerun()
+
+with st.expander("➕ Add payment"):
     acol1, acol2, acol3 = st.columns(3)
-    acol1.text_input("Entity", key="da_new_entity")
-    new_service = acol2.selectbox(
+    new_service = acol1.selectbox(
         "Service type", utils.SERVICE_TYPE_OPTIONS, key="da_new_service",
         format_func=lambda s: utils.SERVICE_TYPE_LABELS[s],
     )
     if new_service == "others":
-        acol3.text_input("Specify service type", key="da_new_other")
-    bcol1, bcol2, bcol3 = st.columns(3)
-    bcol1.selectbox(
+        acol2.text_input("Specify service type", key="da_new_other")
+    acol3.text_input("Entity", key="da_new_entity")
+    bcol1, bcol2, bcol3, bcol4 = st.columns(4)
+    bcol1.selectbox("Owner", owner_ids, format_func=_owner_name, key="da_new_owner")
+    bcol2.selectbox(
         "Billing cycle", utils.BILLING_CYCLE_OPTIONS, key="da_new_cycle",
         format_func=lambda c: utils.BILLING_CYCLE_LABELS[c],
     )
-    bcol2.number_input("Invoice amount", min_value=0.0, step=100.0, format="%.2f", key="da_new_amount")
-    bcol3.date_input("Invoice due date", value=None, key="da_new_due")
+    bcol3.number_input("Invoice amount", min_value=0.0, step=100.0, format="%.2f", key="da_new_amount")
+    bcol4.date_input("Invoice due date", value=None, key="da_new_due")
     st.button("Add payment", on_click=_add_asset)
     if "da_add_error" in st.session_state:
         st.error(st.session_state.pop("da_add_error"))
-
-    if assets:
-        st.divider()
-        asset_by_id = {a["id"]: a for a in assets}
-        edit_id = st.selectbox(
-            "Edit an existing payment", list(asset_by_id),
-            format_func=lambda i: f"{utils.asset_label(asset_by_id[i])} — due {asset_by_id[i]['due_date']}",
-        )
-        ea = asset_by_id[edit_id]
-        k = ea["id"]
-
-        ecol1, ecol2, ecol3 = st.columns(3)
-        edit_entity = ecol1.text_input("Entity", value=ea["entity"], key=f"da_entity_{k}")
-        edit_service = ecol2.selectbox(
-            "Service type", utils.SERVICE_TYPE_OPTIONS,
-            index=utils.SERVICE_TYPE_OPTIONS.index(ea["service_type"]),
-            format_func=lambda s: utils.SERVICE_TYPE_LABELS[s], key=f"da_service_{k}",
-        )
-        edit_other = ""
-        if edit_service == "others":
-            edit_other = ecol3.text_input(
-                "Specify service type", value=ea.get("service_type_other") or "", key=f"da_other_{k}",
-            )
-        fcol1, fcol2, fcol3 = st.columns(3)
-        edit_cycle = fcol1.selectbox(
-            "Billing cycle", utils.BILLING_CYCLE_OPTIONS,
-            index=utils.BILLING_CYCLE_OPTIONS.index(ea["billing_cycle"]),
-            format_func=lambda c: utils.BILLING_CYCLE_LABELS[c], key=f"da_cycle_{k}",
-        )
-        edit_amount = fcol2.number_input(
-            "Invoice amount", min_value=0.0, step=100.0, format="%.2f",
-            value=float(ea.get("invoice_amount") or 0), key=f"da_amount_{k}",
-        )
-        edit_due = fcol3.date_input(
-            "Invoice due date", value=dt.date.fromisoformat(ea["due_date"]), key=f"da_due_{k}",
-        )
-
-        gcol1, gcol2, gcol3, gcol4 = st.columns([1, 1.6, 1.6, 1])
-        if gcol1.button("💾 Save", key=f"da_save_{k}"):
-            if not edit_entity.strip() or not edit_due or (edit_service == "others" and not edit_other.strip()):
-                st.error("Entity and invoice due date are required (and the service type for Others).")
-            else:
-                update_digital_asset(
-                    k, entity=edit_entity.strip(), service_type=edit_service,
-                    service_type_other=edit_other.strip() if edit_service == "others" else None,
-                    billing_cycle=edit_cycle, invoice_amount=edit_amount,
-                    due_date=edit_due.isoformat(),
-                )
-                st.rerun()
-        gcol2.button(
-            "✅ Mark paid → next due date", key=f"da_paid_{k}", on_click=_mark_paid, args=(ea,),
-            help=f"Moves the due date forward one {utils.BILLING_CYCLE_LABELS[ea['billing_cycle']].lower()} "
-                 f"cycle, to {utils.next_due_date(dt.date.fromisoformat(ea['due_date']), ea['billing_cycle'])}.",
-        )
-        confirm_da_delete = gcol3.checkbox("Confirm delete this payment", key=f"da_confirm_del_{k}")
-        if gcol4.button("🗑️ Delete", key=f"da_del_{k}", disabled=not confirm_da_delete):
-            delete_digital_asset(k)
-            st.rerun()
 
     if not notify.email_enabled():
         st.caption(
