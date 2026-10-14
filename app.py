@@ -6,7 +6,7 @@ import streamlit as st
 from auth import require_login, logout_button
 from db import (
     list_projects, list_tasks, list_profiles, update_project,
-    list_licenses, create_license, update_license, delete_license,
+    list_digital_assets, create_digital_asset, update_digital_asset, delete_digital_asset,
 )
 import notify
 import utils
@@ -23,21 +23,23 @@ logout_button()
 
 st.title("Dashboard")
 
-# License reminders — anything expired or expiring within a week is flagged
-# here on every dashboard load, and emailed once (if SMTP is configured).
-licenses = list_licenses()
-for lic in licenses:
-    cat = utils.license_category(lic)
-    if cat == "active":
+# Payment reminders — any digital-asset invoice overdue or due within a week
+# is flagged here on every dashboard load, and emailed once (if SMTP is configured).
+assets = list_digital_assets()
+for a in assets:
+    status = utils.asset_status(a)
+    if status == "upcoming":
         continue
-    days = utils.license_days_left(lic)
-    label = lic["name"] + (f" ({lic['vendor']})" if lic.get("vendor") else "")
-    if cat == "expired":
-        st.error(f"🔑 License **{label}** expired on {lic['expiry_date']} ({-days} day(s) ago).")
+    msg = (
+        f"💳 Invoice for **{utils.asset_label(a)}** "
+        f"({float(a.get('invoice_amount') or 0):,.2f}) is "
+        f"{utils.due_when(utils.asset_days_left(a))} — {a['due_date']}."
+    )
+    if status == "overdue":
+        st.error(msg)
     else:
-        when = "today" if days == 0 else f"in {days} day(s)"
-        st.warning(f"🔑 License **{label}** expires {when} ({lic['expiry_date']}).")
-notify.send_license_reminders(licenses)
+        st.warning(msg)
+notify.send_payment_reminders(assets)
 
 projects = list_projects()
 
@@ -112,85 +114,190 @@ else:
         )
 
 # =====================================================================
-# License expiry — manually maintained list of licenses and their next
-# expiry date. Orange = expiring within a week, red = expired.
+# Digital assets payment tracker — manually maintained list of recurring
+# invoices (servers, domains, email, vendors, ...). S.No. is numbered after
+# filtering so it always gives the count of what's shown.
+# Orange = due within a week, red = overdue.
 # =====================================================================
-st.subheader("🔑 License Expiry")
+st.subheader("💳 Digital Assets Payment Tracker")
 
-if not licenses:
-    st.caption("No licenses tracked yet. Add one below.")
+if "da_flash" in st.session_state:
+    st.success(st.session_state.pop("da_flash"))
+
+if not assets:
+    st.caption("No payments tracked yet. Add one below.")
 else:
-    license_categories = [utils.license_category(lic, today) for lic in licenses]
-    licenses_df = pd.DataFrame([{
-        "License": lic["name"],
-        "Vendor": lic.get("vendor") or "—",
-        "Expiry date": lic["expiry_date"],
-        "Days left": utils.license_days_left(lic, today),
-        "Notes": lic.get("notes") or "",
-    } for lic in licenses])
-
-    def _license_colors(col: pd.Series) -> list:
-        return [
-            f"color: {utils.LICENSE_CATEGORY_COLORS[c]}" if utils.LICENSE_CATEGORY_COLORS[c] else ""
-            for c in license_categories
-        ]
-
-    st.dataframe(
-        licenses_df.style.apply(_license_colors, subset=["Expiry date", "Days left"]),
-        use_container_width=True, hide_index=True,
-    )
-
-with st.expander("➕ Add / edit licenses"):
-    with st.form("new_license", clear_on_submit=True):
-        lcol1, lcol2, lcol3 = st.columns(3)
-        lic_name = lcol1.text_input("License name")
-        lic_vendor = lcol2.text_input("Vendor (optional)")
-        lic_expiry = lcol3.date_input("Next expiry date", value=None)
-        lic_notes = st.text_input("Notes (optional)")
-        lic_submitted = st.form_submit_button("Add license")
-    if lic_submitted:
-        if not lic_name or not lic_expiry:
-            st.error("License name and expiry date are required.")
-        else:
-            create_license(lic_name, lic_vendor, lic_expiry.isoformat(), lic_notes, profile["id"])
-            st.rerun()
-
-    if licenses:
-        st.divider()
-        lic_by_label = {
-            f"{lic['name']} — {lic['expiry_date']}": lic for lic in licenses
-        }
-        edit_label = st.selectbox("Edit an existing license", list(lic_by_label.keys()))
-        edit_lic = lic_by_label[edit_label]
-        k = edit_lic["id"]
-        ecol1, ecol2, ecol3 = st.columns(3)
-        edit_name = ecol1.text_input("License name", value=edit_lic["name"], key=f"lic_name_{k}")
-        edit_vendor = ecol2.text_input("Vendor", value=edit_lic.get("vendor") or "", key=f"lic_vendor_{k}")
-        edit_expiry = ecol3.date_input(
-            "Next expiry date", value=dt.date.fromisoformat(edit_lic["expiry_date"]),
-            key=f"lic_expiry_{k}",
+    with st.expander("🔎 Filters"):
+        entity_choices = sorted({a["entity"] for a in assets})
+        f_entity = st.selectbox("Entity", ["All entities"] + entity_choices, key="da_f_entity")
+        f_service = utils.checkbox_filter(
+            st, "Service type", utils.SERVICE_TYPE_OPTIONS, key_prefix="da_f_service",
+            format_func=lambda s: utils.SERVICE_TYPE_LABELS[s], per_row=5,
         )
-        edit_notes = st.text_input("Notes", value=edit_lic.get("notes") or "", key=f"lic_notes_{k}")
+        f_cycle = utils.checkbox_filter(
+            st, "Billing cycle", utils.BILLING_CYCLE_OPTIONS, key_prefix="da_f_cycle",
+            format_func=lambda c: utils.BILLING_CYCLE_LABELS[c],
+        )
+        f_status = utils.checkbox_filter(
+            st, "Status", list(utils.ASSET_STATUS_LABELS), key_prefix="da_f_status",
+            format_func=lambda s: utils.ASSET_STATUS_LABELS[s],
+        )
 
-        bcol1, bcol2, bcol3 = st.columns([1, 2, 1])
-        if bcol1.button("💾 Save license", key=f"lic_save_{k}"):
-            if not edit_name or not edit_expiry:
-                st.error("License name and expiry date are required.")
+    shown_assets = [
+        a for a in assets
+        if (f_entity == "All entities" or a["entity"] == f_entity)
+        and a["service_type"] in f_service
+        and a["billing_cycle"] in f_cycle
+        and utils.asset_status(a, today) in f_status
+    ]
+
+    if not shown_assets:
+        st.caption(f"No payments match the filters (0 of {len(assets)}).")
+    else:
+        asset_statuses = [utils.asset_status(a, today) for a in shown_assets]
+        assets_df = pd.DataFrame([{
+            "S.No.": i,
+            "Entity": a["entity"],
+            "Service type": utils.service_type_label(a),
+            "Billing cycle": utils.BILLING_CYCLE_LABELS.get(a["billing_cycle"], a["billing_cycle"]),
+            "Invoice amount": float(a.get("invoice_amount") or 0),
+            "Invoice due date": a["due_date"],
+            "Days left": utils.asset_days_left(a, today),
+            "Status": utils.ASSET_STATUS_LABELS[s],
+        } for i, (a, s) in enumerate(zip(shown_assets, asset_statuses), start=1)])
+
+        def _asset_colors(col: pd.Series) -> list:
+            return [
+                f"color: {utils.ASSET_STATUS_COLORS[s]}" if utils.ASSET_STATUS_COLORS[s] else ""
+                for s in asset_statuses
+            ]
+
+        st.dataframe(
+            assets_df.style
+            .apply(_asset_colors, subset=["Invoice due date", "Days left", "Status"])
+            .format({"Invoice amount": "{:,.2f}"}),
+            use_container_width=True, hide_index=True,
+        )
+        st.caption(
+            f"Showing {len(shown_assets)} of {len(assets)} · "
+            f"Total invoice amount: {assets_df['Invoice amount'].sum():,.2f}"
+        )
+
+
+def _add_asset() -> None:
+    """Button callback: validate, insert, then clear the add fields."""
+    ss = st.session_state
+    entity = ss["da_new_entity"].strip()
+    service = ss["da_new_service"]
+    other = ss.get("da_new_other", "").strip()
+    due = ss["da_new_due"]
+    if not entity or not due or (service == "others" and not other):
+        ss["da_add_error"] = (
+            "Entity and invoice due date are required"
+            + (", and enter the service type for Others." if service == "others" else ".")
+        )
+        return
+    create_digital_asset(
+        entity, service, other if service == "others" else None,
+        ss["da_new_cycle"], ss["da_new_amount"], due.isoformat(), profile["id"],
+    )
+    ss["da_new_entity"] = ""
+    ss["da_new_other"] = ""
+    ss["da_new_amount"] = 0.0
+    ss["da_new_due"] = None
+    ss["da_flash"] = f"Added {entity}."
+
+
+def _mark_paid(asset: dict) -> None:
+    """Button callback: roll the due date forward by one billing cycle."""
+    nxt = utils.next_due_date(dt.date.fromisoformat(asset["due_date"]), asset["billing_cycle"])
+    update_digital_asset(asset["id"], due_date=nxt.isoformat())
+    st.session_state.pop(f"da_due_{asset['id']}", None)  # show the new date in the edit field
+    st.session_state["da_flash"] = f"Marked {utils.asset_label(asset)} paid — next due {nxt}."
+
+
+with st.expander("➕ Add / edit payments"):
+    acol1, acol2, acol3 = st.columns(3)
+    acol1.text_input("Entity", key="da_new_entity")
+    new_service = acol2.selectbox(
+        "Service type", utils.SERVICE_TYPE_OPTIONS, key="da_new_service",
+        format_func=lambda s: utils.SERVICE_TYPE_LABELS[s],
+    )
+    if new_service == "others":
+        acol3.text_input("Specify service type", key="da_new_other")
+    bcol1, bcol2, bcol3 = st.columns(3)
+    bcol1.selectbox(
+        "Billing cycle", utils.BILLING_CYCLE_OPTIONS, key="da_new_cycle",
+        format_func=lambda c: utils.BILLING_CYCLE_LABELS[c],
+    )
+    bcol2.number_input("Invoice amount", min_value=0.0, step=100.0, format="%.2f", key="da_new_amount")
+    bcol3.date_input("Invoice due date", value=None, key="da_new_due")
+    st.button("Add payment", on_click=_add_asset)
+    if "da_add_error" in st.session_state:
+        st.error(st.session_state.pop("da_add_error"))
+
+    if assets:
+        st.divider()
+        asset_by_id = {a["id"]: a for a in assets}
+        edit_id = st.selectbox(
+            "Edit an existing payment", list(asset_by_id),
+            format_func=lambda i: f"{utils.asset_label(asset_by_id[i])} — due {asset_by_id[i]['due_date']}",
+        )
+        ea = asset_by_id[edit_id]
+        k = ea["id"]
+
+        ecol1, ecol2, ecol3 = st.columns(3)
+        edit_entity = ecol1.text_input("Entity", value=ea["entity"], key=f"da_entity_{k}")
+        edit_service = ecol2.selectbox(
+            "Service type", utils.SERVICE_TYPE_OPTIONS,
+            index=utils.SERVICE_TYPE_OPTIONS.index(ea["service_type"]),
+            format_func=lambda s: utils.SERVICE_TYPE_LABELS[s], key=f"da_service_{k}",
+        )
+        edit_other = ""
+        if edit_service == "others":
+            edit_other = ecol3.text_input(
+                "Specify service type", value=ea.get("service_type_other") or "", key=f"da_other_{k}",
+            )
+        fcol1, fcol2, fcol3 = st.columns(3)
+        edit_cycle = fcol1.selectbox(
+            "Billing cycle", utils.BILLING_CYCLE_OPTIONS,
+            index=utils.BILLING_CYCLE_OPTIONS.index(ea["billing_cycle"]),
+            format_func=lambda c: utils.BILLING_CYCLE_LABELS[c], key=f"da_cycle_{k}",
+        )
+        edit_amount = fcol2.number_input(
+            "Invoice amount", min_value=0.0, step=100.0, format="%.2f",
+            value=float(ea.get("invoice_amount") or 0), key=f"da_amount_{k}",
+        )
+        edit_due = fcol3.date_input(
+            "Invoice due date", value=dt.date.fromisoformat(ea["due_date"]), key=f"da_due_{k}",
+        )
+
+        gcol1, gcol2, gcol3, gcol4 = st.columns([1, 1.6, 1.6, 1])
+        if gcol1.button("💾 Save", key=f"da_save_{k}"):
+            if not edit_entity.strip() or not edit_due or (edit_service == "others" and not edit_other.strip()):
+                st.error("Entity and invoice due date are required (and the service type for Others).")
             else:
-                update_license(
-                    k, name=edit_name.strip(), vendor=edit_vendor.strip() or None,
-                    expiry_date=edit_expiry.isoformat(), notes=edit_notes.strip() or None,
+                update_digital_asset(
+                    k, entity=edit_entity.strip(), service_type=edit_service,
+                    service_type_other=edit_other.strip() if edit_service == "others" else None,
+                    billing_cycle=edit_cycle, invoice_amount=edit_amount,
+                    due_date=edit_due.isoformat(),
                 )
                 st.rerun()
-        confirm_lic_delete = bcol2.checkbox("Confirm delete this license", key=f"lic_confirm_del_{k}")
-        if bcol3.button("🗑️ Delete", key=f"lic_del_{k}", disabled=not confirm_lic_delete):
-            delete_license(k)
+        gcol2.button(
+            "✅ Mark paid → next due date", key=f"da_paid_{k}", on_click=_mark_paid, args=(ea,),
+            help=f"Moves the due date forward one {utils.BILLING_CYCLE_LABELS[ea['billing_cycle']].lower()} "
+                 f"cycle, to {utils.next_due_date(dt.date.fromisoformat(ea['due_date']), ea['billing_cycle'])}.",
+        )
+        confirm_da_delete = gcol3.checkbox("Confirm delete this payment", key=f"da_confirm_del_{k}")
+        if gcol4.button("🗑️ Delete", key=f"da_del_{k}", disabled=not confirm_da_delete):
+            delete_digital_asset(k)
             st.rerun()
 
     if not notify.email_enabled():
         st.caption(
             "Email reminders are off — add the SMTP_* settings to secrets.toml to "
-            f"email {notify.DEFAULT_REMINDER_TO} when a license is within a week of expiry."
+            f"email {notify.DEFAULT_REMINDER_TO} when an invoice is due within a week."
         )
 
 st.divider()
