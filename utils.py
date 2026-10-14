@@ -1,6 +1,7 @@
 """
 Shared constants and small helpers used across pages.
 """
+import calendar
 import datetime as dt
 
 STATUS_OPTIONS = ["todo", "in_progress", "in_review", "done"]
@@ -60,29 +61,85 @@ def task_date_label(task: dict) -> str:
     return f"Due: {task.get('due_date') or '—'}"
 
 
-# Licenses expiring within this many days trigger a portal/email reminder.
-LICENSE_REMINDER_DAYS = 7
-LICENSE_CATEGORY_COLORS = {
-    "active": None,
-    "expiring": "orange",
-    "expired": "red",
+# ---------------------------------------------------------------
+# Digital assets payment tracker
+# ---------------------------------------------------------------
+SERVICE_TYPE_OPTIONS = ["server", "domain", "email", "vendor_payment", "others"]
+SERVICE_TYPE_LABELS = {
+    "server": "Server",
+    "domain": "Domain",
+    "email": "Email",
+    "vendor_payment": "Vendor payment",
+    "others": "Others",
+}
+
+BILLING_CYCLE_OPTIONS = ["monthly", "quarterly", "semi_annually", "annually"]
+BILLING_CYCLE_LABELS = {
+    "monthly": "Monthly",
+    "quarterly": "Quarterly",
+    "semi_annually": "Semi-annually",
+    "annually": "Annually",
+}
+BILLING_CYCLE_MONTHS = {"monthly": 1, "quarterly": 3, "semi_annually": 6, "annually": 12}
+
+# Invoices due within this many days trigger a portal/email reminder.
+ASSET_REMINDER_DAYS = 7
+ASSET_STATUS_LABELS = {
+    "upcoming": "Upcoming",
+    "due_soon": "Due this week",
+    "overdue": "Overdue",
+}
+ASSET_STATUS_COLORS = {
+    "upcoming": None,
+    "due_soon": "orange",
+    "overdue": "red",
 }
 
 
-def license_days_left(lic: dict, today: dt.date = None) -> int:
-    today = today or dt.date.today()
-    return (dt.date.fromisoformat(lic["expiry_date"]) - today).days
+def service_type_label(asset: dict) -> str:
+    """The typed-in text for 'others', else the dropdown label."""
+    if asset["service_type"] == "others" and asset.get("service_type_other"):
+        return asset["service_type_other"]
+    return SERVICE_TYPE_LABELS.get(asset["service_type"], asset["service_type"])
 
 
-def license_category(lic: dict, today: dt.date = None) -> str:
-    """Expired if the expiry date has passed; Expiring if within
-    LICENSE_REMINDER_DAYS; otherwise Active."""
-    days = license_days_left(lic, today)
+def asset_label(asset: dict) -> str:
+    return f"{asset['entity']} — {service_type_label(asset)}"
+
+
+def due_when(days: int) -> str:
+    """Human phrase for days until due: 'overdue by 3 day(s)', 'due today', 'due in 5 day(s)'."""
     if days < 0:
-        return "expired"
-    if days <= LICENSE_REMINDER_DAYS:
-        return "expiring"
-    return "active"
+        return f"overdue by {-days} day(s)"
+    if days == 0:
+        return "due today"
+    return f"due in {days} day(s)"
+
+
+def asset_days_left(asset: dict, today: dt.date = None) -> int:
+    today = today or dt.date.today()
+    return (dt.date.fromisoformat(asset["due_date"]) - today).days
+
+
+def asset_status(asset: dict, today: dt.date = None) -> str:
+    """Overdue if the due date has passed; Due this week if within
+    ASSET_REMINDER_DAYS; otherwise Upcoming."""
+    days = asset_days_left(asset, today)
+    if days < 0:
+        return "overdue"
+    if days <= ASSET_REMINDER_DAYS:
+        return "due_soon"
+    return "upcoming"
+
+
+def next_due_date(due: dt.date, billing_cycle: str) -> dt.date:
+    """Advance a due date by one billing cycle, clamping the day to the
+    target month's length (e.g. 31 Jan + 1 month -> 28/29 Feb)."""
+    months = BILLING_CYCLE_MONTHS[billing_cycle]
+    month_index = due.month - 1 + months
+    year, month = due.year + month_index // 12, month_index % 12 + 1
+    day = min(due.day, calendar.monthrange(year, month)[1])
+    return dt.date(year, month, day)
 
 
 def name_to_id_map(profiles: list) -> dict:
