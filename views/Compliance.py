@@ -13,6 +13,8 @@ from db import (
     list_compliance_entities, create_compliance_entity, update_compliance_entity,
     delete_compliance_entity, list_compliance_items, create_compliance_item,
     update_compliance_item, delete_compliance_item,
+    list_compliance_documents, upload_compliance_document, compliance_document_url,
+    delete_compliance_document, COMPLIANCE_DOC_MAX_BYTES,
 )
 import utils
 
@@ -123,6 +125,60 @@ def _category_input(label: str, current, categories: list, key: str):
     return choice
 
 
+def _fmt_size(n) -> str:
+    n = n or 0
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.0f} KB"
+    return f"{n / (1024 * 1024):.1f} MB"
+
+
+def _documents_section(docs: list, key: str, item_id=None, entity_id=None) -> None:
+    """Attached files (download / delete) plus an uploader for more. Pass
+    exactly one of item_id / entity_id: what new uploads attach to."""
+    st.markdown(f"**📎 Documents** ({len(docs)})")
+    for d in docs:
+        dc1, dc2, dc3 = st.columns([5, 1.3, 0.7], vertical_alignment="center")
+        dc1.markdown(f"{d['file_name']}  \n:gray[{_fmt_size(d.get('size_bytes'))} · "
+                     f"uploaded {(d.get('created_at') or '')[:10]}]")
+        try:
+            dc2.link_button("⬇️ Download", compliance_document_url(d), use_container_width=True)
+        except Exception as e:
+            dc2.caption(f"Link unavailable: {e}")
+        with dc3.popover("🗑️", use_container_width=True):
+            st.caption(f"Delete “{d['file_name']}”? This can't be undone.")
+            if st.button("Delete file", key=f"cp_doc_del_{d['id']}", type="primary"):
+                delete_compliance_document(d)
+                _flash(f"Deleted “{d['file_name']}”.")
+                st.rerun()
+
+    uv = _ver(f"upload_{key}")
+    files = st.file_uploader(
+        f"Attach files — any type, up to {COMPLIANCE_DOC_MAX_BYTES // (1024 * 1024)} MB each",
+        accept_multiple_files=True, key=f"cp_up_{key}_{uv}",
+    )
+    if files and st.button("⬆️ Upload", key=f"cp_up_btn_{key}_{uv}", type="primary"):
+        done, failed = [], []
+        for f in files:
+            if f.size > COMPLIANCE_DOC_MAX_BYTES:
+                failed.append(f"{f.name}: larger than {COMPLIANCE_DOC_MAX_BYTES // (1024 * 1024)} MB")
+                continue
+            try:
+                upload_compliance_document(
+                    profile["id"], f.name, f.getvalue(), f.type, item_id=item_id, entity_id=entity_id,
+                )
+                done.append(f.name)
+            except Exception as e:
+                failed.append(f"{f.name}: {e}")
+        if done:
+            _flash(f"Uploaded {len(done)} file(s): " + ", ".join(done))
+        if failed:
+            ss["cp_flash_error"] = "Couldn't upload:\n" + "\n".join(f"- {m}" for m in failed)
+        _bump(f"upload_{key}")  # clear the uploader
+        st.rerun()
+
+
 def _mark_done(item: dict) -> None:
     """Recurring items roll forward one cycle (due date and start date) and go
     back to Pending; one-time / no-frequency items are set to Done."""
@@ -156,6 +212,13 @@ for i in items:
     if i.get("parent_id"):
         children_by_parent.setdefault(i["parent_id"], []).append(i)
 categories = sorted(set(DEFAULT_CATEGORIES) | {i["category"] for i in items if i.get("category")})
+docs_by_item: dict = {}
+docs_by_entity: dict = {}
+for d in list_compliance_documents():
+    if d.get("item_id"):
+        docs_by_item.setdefault(d["item_id"], []).append(d)
+    else:
+        docs_by_entity.setdefault(d["entity_id"], []).append(d)
 
 
 def _entity_label(eid) -> str:
@@ -175,6 +238,8 @@ st.title("🛡️ Compliance Tracker")
 
 if "cp_flash" in ss:
     st.success(ss.pop("cp_flash"))
+if "cp_flash_error" in ss:
+    st.error(ss.pop("cp_flash_error"))
 
 alerts = {i["id"]: utils.compliance_alert(i, today) for i in items}
 overdue = sorted((i for i in items if alerts[i["id"]] == "overdue"), key=lambda i: i["due_date"])
@@ -265,6 +330,7 @@ with tab_tracker:
                         f"{sum(1 for s in subs if s['status'] in utils.COMPLIANCE_CLOSED_STATUSES)}/{len(subs)}"
                         if subs else ""
                     ),
+                    "Docs": f"📎 {len(docs_by_item[i['id']])}" if docs_by_item.get(i["id"]) else "",
                     "Remarks": i.get("remarks") or "",
                     "Extra details": utils.pairs_to_text(i.get("extra")),
                 })
@@ -356,6 +422,10 @@ with tab_tracker:
                         _bump("items_table")
                         st.rerun()
 
+                    # -------- Documents --------
+                    st.divider()
+                    _documents_section(docs_by_item.get(k, []), key=f"item_{k}", item_id=k)
+
                     # -------- Sub-tasks --------
                     st.divider()
                     st.markdown("**Sub-tasks** — edit cells directly, add rows at the bottom, "
@@ -441,6 +511,7 @@ with tab_entities:
                 "Name": e["name"],
                 "Open items": sum(1 for i in e_items if i["status"] not in utils.COMPLIANCE_CLOSED_STATUSES),
                 "Overdue": sum(1 for i in e_items if alerts[i["id"]] == "overdue"),
+                "Docs": f"📎 {len(docs_by_entity[e['id']])}" if docs_by_entity.get(e["id"]) else "",
                 "Details": utils.pairs_to_text(e.get("details")),
             })
         ent_event = st.dataframe(
@@ -484,6 +555,11 @@ with tab_entities:
                     _bump("entities_table")
                     _flash(f"Deleted {ent['name']}.")
                     st.rerun()
+
+                st.divider()
+                st.caption("Company-level documents (e.g. incorporation certificate, MOA). "
+                           "Item documents like a visa or licence go on the item in the Tracker tab.")
+                _documents_section(docs_by_entity.get(ek, []), key=f"entity_{ek}", entity_id=ek)
     else:
         st.caption("No entities yet.")
 
