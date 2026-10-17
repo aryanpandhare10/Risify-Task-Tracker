@@ -32,8 +32,7 @@ STATUS_BY_LABEL = {v: k for k, v in utils.COMPLIANCE_STATUS_LABELS.items()}
 
 # Starter checklists offered when a new entity is added.
 ENTITY_TEMPLATE_DETAILS = {
-    "company": ["Directors", "Shareholders", "% Holding", "Rate per share", "Quantity",
-                "Incorporation date", "License No."],
+    "company": ["Directors", "License No."],
     "individual": ["Employee of"],
 }
 ENTITY_TEMPLATE_ITEMS = {
@@ -125,6 +124,110 @@ def _category_input(label: str, current, categories: list, key: str):
     return choice
 
 
+OTHER = "Other…"
+
+
+def _choice_input(label: str, options: list, current, key: str):
+    """Selectbox of standard options (plus the current value if it's a custom
+    one), a blank choice, and 'Other…' which opens a text box."""
+    opts = [None] + options + ([current] if current and current not in options else []) + [OTHER]
+    choice = st.selectbox(
+        label, opts, index=opts.index(current) if current in opts else 0,
+        format_func=lambda o: "—" if o is None else o, key=f"{key}_sel",
+    )
+    if choice == OTHER:
+        return _clean_text(st.text_input(f"{label} — type it", key=f"{key}_new"))
+    return choice
+
+
+def _num_or_none(v):
+    if v is None or (not isinstance(v, str) and pd.isna(v)):
+        return None
+    v = float(v)
+    return int(v) if v.is_integer() else v
+
+
+def _money(v, currency) -> str:
+    if v is None:
+        return ""
+    return f"{currency} {utils.fmt_number(v)}" if currency else utils.fmt_number(v)
+
+
+def _pct(v) -> str:
+    return "" if v is None else f"{utils.fmt_number(round(v, 2))}%"
+
+
+def _company_form(ent: dict, key: str) -> dict:
+    """Company register fields: country, type, business activity,
+    incorporation date (with live Years), currency and shareholders.
+    Returns the values as compliance_entities columns."""
+    c1, c2 = st.columns(2)
+    with c1:
+        country = _choice_input("Country", utils.COMPANY_COUNTRY_OPTIONS, ent.get("country"), f"{key}_country")
+    with c2:
+        entity_type = _choice_input(
+            "Type of entity", utils.COMPANY_TYPE_OPTIONS, ent.get("entity_type"), f"{key}_type",
+        )
+    activity = st.text_input("Business activity", value=ent.get("business_activity") or "", key=f"{key}_activity")
+    c3, c4, c5 = st.columns(3)
+    inc = c3.date_input(
+        "Incorporation date", value=_date_or_none(ent.get("incorporation_date")),
+        min_value=dt.date(1900, 1, 1), max_value=today, key=f"{key}_inc",
+    )
+    c4.metric("Years (since incorporation)", utils.years_since(inc, today) or "—")
+    with c5:
+        # Until a currency is saved, default it from the country.
+        saved = ent.get("currency")
+        currency = _choice_input(
+            "Currency (face value)", utils.CURRENCY_OPTIONS,
+            saved or utils.CURRENCY_BY_COUNTRY.get(country),
+            f"{key}_cur" if saved else f"{key}_cur_{country}",
+        )
+
+    st.markdown("**Shareholders** — one row per shareholder; add rows at the bottom, "
+                "select a row and press Delete to remove it.")
+    sh = ent.get("shareholders") or []
+    edited = st.data_editor(
+        pd.DataFrame({
+            "Name of Shareholder": pd.Series([s.get("name") for s in sh], dtype="object"),
+            "No. of Shares held": pd.Series([s.get("shares") for s in sh], dtype="float64"),
+            "Face Value": pd.Series([s.get("face_value") for s in sh], dtype="float64"),
+        }),
+        key=f"{key}_shareholders", num_rows="dynamic", hide_index=True, use_container_width=True,
+        column_config={
+            "Name of Shareholder": st.column_config.TextColumn("Name of Shareholder", required=True),
+            "No. of Shares held": st.column_config.NumberColumn("No. of Shares held", min_value=0),
+            "Face Value": st.column_config.NumberColumn("Face Value (per share)", min_value=0),
+        },
+    )
+    shareholders = []
+    for row in edited.to_dict("records"):
+        name = _clean_text(row.get("Name of Shareholder"))
+        if name:
+            shareholders.append({
+                "name": name,
+                "shares": _num_or_none(row.get("No. of Shares held")),
+                "face_value": _num_or_none(row.get("Face Value")),
+            })
+    calc = utils.shareholder_table(shareholders)
+    if calc:
+        st.dataframe(
+            pd.DataFrame([{
+                "Name of Shareholder": c["name"],
+                "Paid up share Capital/Contribution": _money(c["paid_up"], currency),
+                "% of Shareholding": _pct(c["pct"]),
+            } for c in calc]),
+            hide_index=True, use_container_width=True,
+        )
+        st.caption("Calculated: paid-up = shares × face value; % = shares ÷ total shares.")
+
+    return {
+        "country": country, "entity_type": entity_type,
+        "business_activity": _clean_text(activity), "incorporation_date": _to_iso(inc),
+        "currency": currency, "shareholders": shareholders,
+    }
+
+
 def _fmt_size(n) -> str:
     n = n or 0
     if n < 1024:
@@ -137,6 +240,11 @@ def _fmt_size(n) -> str:
 def _documents_section(docs: list, key: str, item_id=None, entity_id=None) -> None:
     """Attached files (download / delete) plus an uploader for more. Pass
     exactly one of item_id / entity_id: what new uploads attach to."""
+    if not docs_enabled:
+        st.markdown("**📎 Documents**")
+        st.info("Document uploads aren't set up yet: an admin needs to run "
+                "`supabase/compliance_documents.sql` in the Supabase SQL Editor.")
+        return
     st.markdown(f"**📎 Documents** ({len(docs)})")
     for d in docs:
         dc1, dc2, dc3 = st.columns([5, 1.3, 0.7], vertical_alignment="center")
@@ -214,7 +322,13 @@ for i in items:
 categories = sorted(set(DEFAULT_CATEGORIES) | {i["category"] for i in items if i.get("category")})
 docs_by_item: dict = {}
 docs_by_entity: dict = {}
-for d in list_compliance_documents():
+try:
+    all_docs = list_compliance_documents()
+    docs_enabled = True
+except Exception:
+    # Table not set up yet: keep the tracker usable, just without documents.
+    all_docs, docs_enabled = [], False
+for d in all_docs:
     if d.get("item_id"):
         docs_by_item.setdefault(d["item_id"], []).append(d)
     else:
@@ -502,48 +616,74 @@ with tab_tracker:
 # ===============================================================
 with tab_entities:
     if entities:
-        ent_rows = []
+        # Register layout: one row per shareholder; the company's own columns
+        # are filled on its first row only.
+        ent_rows, row_entity = [], []
         for n, e in enumerate(entities, start=1):
             e_items = [i for i in items if i["entity_id"] == e["id"]]
-            ent_rows.append({
-                "S.No.": n,
-                "Type": utils.ENTITY_KIND_LABELS.get(e["kind"], e["kind"]),
+            is_company = e["kind"] == "company"
+            cur = e.get("currency")
+            head = {
+                "Sr. No.": str(n),
                 "Name": e["name"],
-                "Open items": sum(1 for i in e_items if i["status"] not in utils.COMPLIANCE_CLOSED_STATUSES),
-                "Overdue": sum(1 for i in e_items if alerts[i["id"]] == "overdue"),
+                "Country": e.get("country") or "",
+                "Type of entity": (e.get("entity_type") or "Company") if is_company else "Individual",
+                "Business Activity": e.get("business_activity") or "",
+                "Incorporation Date": e.get("incorporation_date") or "",
+                "Years": utils.years_since(e.get("incorporation_date"), today),
+            }
+            tail = {
+                "Open items": str(sum(1 for i in e_items if i["status"] not in utils.COMPLIANCE_CLOSED_STATUSES)),
+                "Overdue": str(sum(1 for i in e_items if alerts[i["id"]] == "overdue")),
                 "Docs": f"📎 {len(docs_by_entity[e['id']])}" if docs_by_entity.get(e["id"]) else "",
-                "Details": utils.pairs_to_text(e.get("details")),
-            })
+                "Other details": utils.pairs_to_text(e.get("details")),
+            }
+            for j, s in enumerate(utils.shareholder_table(e.get("shareholders")) or [None]):
+                first = j == 0
+                ent_rows.append({
+                    **(head if first else dict.fromkeys(head, "")),
+                    "Name of Shareholder": s["name"] if s else "",
+                    "No. of Shares held": utils.fmt_number(s["shares"]) if s else "",
+                    "Face Value": _money(s["face_value"], cur) if s else "",
+                    "Paid up share Capital/Contribution": _money(s["paid_up"], cur) if s else "",
+                    "% of Shareholding": _pct(s["pct"]) if s else "",
+                    **(tail if first else dict.fromkeys(tail, "")),
+                })
+                row_entity.append(e)
         ent_event = st.dataframe(
             pd.DataFrame(ent_rows), use_container_width=True, hide_index=True,
             on_select="rerun", selection_mode="single-row",
             key=f"cp_entities_table_{_ver('entities_table')}",
         )
-        st.caption("Click an entity to edit its name and details.")
+        st.caption("Click an entity to edit it. Years since incorporation update automatically.")
 
         esel = ent_event.selection.rows
-        if esel and esel[0] < len(entities):
-            ent = entities[esel[0]]
+        if esel and esel[0] < len(row_entity):
+            ent = row_entity[esel[0]]
             ek = ent["id"]
-            erev = f"{ek}_{len(ent.get('details') or [])}_{ent['name']}"
+            erev = f"{ek}_{_ver('ent_edit')}"  # fresh widgets after any save
             with st.container(border=True):
                 st.markdown(f"#### ✏️ {ent['name']}")
                 ec1, ec2 = st.columns([1, 3])
                 ent_kind = ec1.selectbox(
-                    "Type", utils.ENTITY_KIND_OPTIONS,
+                    "Company / individual", utils.ENTITY_KIND_OPTIONS,
                     index=utils.ENTITY_KIND_OPTIONS.index(ent["kind"]),
                     format_func=lambda x: utils.ENTITY_KIND_LABELS[x], key=f"cp_ent_kind_{erev}",
                 )
                 ent_name = ec2.text_input("Name", value=ent["name"], key=f"cp_ent_name_{erev}")
-                st.markdown("**Details** — add any field you need.")
-                ent_details = _pairs_editor(ent.get("details"), key=f"cp_ent_details_{erev}_{_ver('ent_details')}")
+                company_fields = _company_form(ent, f"cp_ent_co_{erev}") if ent_kind == "company" else {}
+                st.markdown("**Other details** — add any field you need (e.g. Directors, License No.).")
+                ent_details = _pairs_editor(ent.get("details"), key=f"cp_ent_details_{erev}")
                 d1, d2, d3 = st.columns([1, 2.5, 1])
                 if d1.button("💾 Save", key=f"cp_ent_save_{ek}", type="primary"):
                     if not _clean_text(ent_name):
                         st.error("Name is required.")
                     else:
-                        update_compliance_entity(ek, kind=ent_kind, name=_clean_text(ent_name), details=ent_details)
-                        _bump("ent_details")
+                        update_compliance_entity(
+                            ek, kind=ent_kind, name=_clean_text(ent_name), details=ent_details, **company_fields,
+                        )
+                        _bump("ent_edit")
+                        _bump("entities_table")
                         _flash(f"Saved {_clean_text(ent_name)}.")
                         st.rerun()
                 n_items = sum(1 for i in items if i["entity_id"] == ek)
@@ -567,11 +707,12 @@ with tab_entities:
         av = _ver("add_entity")
         na1, na2 = st.columns([1, 3])
         new_kind = na1.selectbox(
-            "Type", utils.ENTITY_KIND_OPTIONS, format_func=lambda x: utils.ENTITY_KIND_LABELS[x],
+            "Company / individual", utils.ENTITY_KIND_OPTIONS, format_func=lambda x: utils.ENTITY_KIND_LABELS[x],
             key=f"cp_new_ent_kind_{av}",
         )
         new_name = na2.text_input("Name", key=f"cp_new_ent_name_{av}")
-        st.markdown("**Details** — fill in what you know; add or remove fields freely.")
+        new_company = _company_form({}, f"cp_new_ent_co_{av}") if new_kind == "company" else {}
+        st.markdown("**Other details** — fill in what you know; add or remove fields freely.")
         new_details = _pairs_editor(
             [{"field": f, "value": ""} for f in ENTITY_TEMPLATE_DETAILS[new_kind]],
             key=f"cp_new_ent_details_{new_kind}_{av}",
@@ -585,7 +726,7 @@ with tab_entities:
             if not _clean_text(new_name):
                 st.error("Name is required.")
             else:
-                ent = create_compliance_entity(new_kind, new_name, new_details, profile["id"])
+                ent = create_compliance_entity(new_kind, new_name, new_details, profile["id"], **new_company)
                 if add_checklist:
                     for n, (cat, particulars) in enumerate(template, start=1):
                         create_compliance_item(
