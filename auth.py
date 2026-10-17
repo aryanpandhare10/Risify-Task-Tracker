@@ -82,6 +82,6 @@ def logout_button() -> None:
             sb.auth.sign_out()
         except Exception:
             pass
-        for k in ("session", "user", "profile"):
+        for k in ("session", "user", "profile", "sb_client", "compliance_reminders_checked"):
             st.session_state.pop(k, None)
         st.rerun()
