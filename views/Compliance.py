@@ -32,7 +32,7 @@ STATUS_BY_LABEL = {v: k for k, v in utils.COMPLIANCE_STATUS_LABELS.items()}
 
 # Starter checklists offered when a new entity is added.
 ENTITY_TEMPLATE_DETAILS = {
-    "company": ["Directors", "License No."],
+    "company": ["License No."],
     "individual": ["Employee of"],
 }
 ENTITY_TEMPLATE_ITEMS = {
@@ -184,10 +184,21 @@ def _company_form(ent: dict, key: str) -> dict:
             f"{key}_cur" if saved else f"{key}_cur_{country}",
         )
 
-    st.markdown("**Shareholders** — one row per shareholder; add rows at the bottom, "
-                "select a row and press Delete to remove it.")
+    st.caption("Directors and shareholders: one per row; add rows at the bottom, "
+               "select a row and press Delete to remove it.")
+    dcol, scol = st.columns([1, 2])
+    dirs = ent.get("directors") or []
+    edited_dirs = dcol.data_editor(
+        pd.DataFrame({"Name of Director": pd.Series([d.get("name") for d in dirs], dtype="object")}),
+        key=f"{key}_directors", num_rows="dynamic", hide_index=True, use_container_width=True,
+        column_config={"Name of Director": st.column_config.TextColumn("Name of Director", required=True)},
+    )
+    directors = [
+        {"name": name} for name in
+        (_clean_text(row.get("Name of Director")) for row in edited_dirs.to_dict("records")) if name
+    ]
     sh = ent.get("shareholders") or []
-    edited = st.data_editor(
+    edited = scol.data_editor(
         pd.DataFrame({
             "Name of Shareholder": pd.Series([s.get("name") for s in sh], dtype="object"),
             "No. of Shares held": pd.Series([s.get("shares") for s in sh], dtype="float64"),
@@ -224,7 +235,7 @@ def _company_form(ent: dict, key: str) -> dict:
     return {
         "country": country, "entity_type": entity_type,
         "business_activity": _clean_text(activity), "incorporation_date": _to_iso(inc),
-        "currency": currency, "shareholders": shareholders,
+        "currency": currency, "directors": directors, "shareholders": shareholders,
     }
 
 
@@ -616,18 +627,17 @@ with tab_tracker:
 # ===============================================================
 with tab_entities:
     if entities:
-        # Register layout: one row per shareholder; the company's own columns
-        # are filled on its first row only.
+        # Register layout: one row per director / shareholder; the entity's
+        # own columns are filled on its first row only.
         ent_rows, row_entity = [], []
         for n, e in enumerate(entities, start=1):
             e_items = [i for i in items if i["entity_id"] == e["id"]]
-            is_company = e["kind"] == "company"
             cur = e.get("currency")
             head = {
                 "Sr. No.": str(n),
                 "Name": e["name"],
                 "Country": e.get("country") or "",
-                "Type of entity": (e.get("entity_type") or "Company") if is_company else "Individual",
+                "Type of entity": utils.entity_type_label(e),
                 "Business Activity": e.get("business_activity") or "",
                 "Incorporation Date": e.get("incorporation_date") or "",
                 "Years": utils.years_since(e.get("incorporation_date"), today),
@@ -638,10 +648,11 @@ with tab_entities:
                 "Docs": f"📎 {len(docs_by_entity[e['id']])}" if docs_by_entity.get(e["id"]) else "",
                 "Other details": utils.pairs_to_text(e.get("details")),
             }
-            for j, s in enumerate(utils.shareholder_table(e.get("shareholders")) or [None]):
+            for j, (director, s) in enumerate(utils.register_lines(e)):
                 first = j == 0
                 ent_rows.append({
                     **(head if first else dict.fromkeys(head, "")),
+                    "Name of Director": director or "",
                     "Name of Shareholder": s["name"] if s else "",
                     "No. of Shares held": utils.fmt_number(s["shares"]) if s else "",
                     "Face Value": _money(s["face_value"], cur) if s else "",
@@ -655,7 +666,17 @@ with tab_entities:
             on_select="rerun", selection_mode="single-row",
             key=f"cp_entities_table_{_ver('entities_table')}",
         )
-        st.caption("Click an entity to edit it. Years since incorporation update automatically.")
+        cap_col, dl_col = st.columns([3, 1], vertical_alignment="center")
+        cap_col.caption("Click an entity to edit it. Years since incorporation update automatically.")
+        try:
+            dl_col.download_button(
+                "⬇️ Download Excel", data=utils.entity_register_xlsx(entities),
+                file_name=f"entity_register_{today.isoformat()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+        except Exception as e:
+            dl_col.caption(f"Excel export unavailable: {e}")
 
         esel = ent_event.selection.rows
         if esel and esel[0] < len(row_entity):
