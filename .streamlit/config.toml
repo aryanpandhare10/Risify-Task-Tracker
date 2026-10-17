@@ -8,3 +8,5 @@ font = "sans serif"
 
 [server]
 headless = true
+# MB; matches the compliance-docs bucket limit (Supabase Free plan maximum)
+maxUploadSize = 50
