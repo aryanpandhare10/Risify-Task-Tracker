@@ -199,6 +199,100 @@ def shareholder_table(shareholders) -> list:
         })
     return out
 
+
+def register_lines(entity: dict) -> list:
+    """Pair an entity's directors with its shareholders, one register row
+    each: as many rows as the longer list (at least one). Returns
+    [(director name or None, shareholder_table() row or None), ...]."""
+    dirs = [d["name"] for d in (entity.get("directors") or []) if d.get("name")]
+    shs = shareholder_table(entity.get("shareholders"))
+    n = max(len(dirs), len(shs), 1)
+    return [(dirs[i] if i < len(dirs) else None, shs[i] if i < len(shs) else None) for i in range(n)]
+
+
+def entity_type_label(entity: dict) -> str:
+    if entity.get("kind") == "company":
+        return entity.get("entity_type") or "Company"
+    return "Individual"
+
+
+REGISTER_HEADERS = [
+    "Sr. No.", "Name", "Country", "Type of entity", "Business Activity", "Incorporation Date",
+    "Years", "Name of Director", "Name of Shareholder", "No. of Shares held", "Face Value",
+    "Paid up share Capital/Contribution", "% of Shareholding", "Other details",
+]
+_REGISTER_WIDTHS = [7, 34, 12, 16, 28, 14, 14, 26, 26, 14, 14, 20, 12, 40]
+
+
+def entity_register_xlsx(entities: list) -> bytes:
+    """The entity register as an Excel file: one row per director /
+    shareholder, real dates and numbers, and a Years formula that keeps
+    counting from the incorporation date every time the file is opened."""
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    def num_fmt(v, currency=None):
+        base = "#,##0" if float(v).is_integer() else "#,##0.00"
+        return f'"{currency} "{base}' if currency else base
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Entities"
+    ws.append(REGISTER_HEADERS)
+    col = {h: i + 1 for i, h in enumerate(REGISTER_HEADERS)}
+
+    r = 1
+    for n, e in enumerate(entities, start=1):
+        cur = e.get("currency")
+        for j, (director, s) in enumerate(register_lines(e)):
+            r += 1
+            if j == 0:
+                ws.cell(r, col["Sr. No."], n)
+                ws.cell(r, col["Name"], e["name"])
+                ws.cell(r, col["Country"], e.get("country"))
+                ws.cell(r, col["Type of entity"], entity_type_label(e))
+                ws.cell(r, col["Business Activity"], e.get("business_activity"))
+                if e.get("incorporation_date"):
+                    c = ws.cell(r, col["Incorporation Date"], dt.date.fromisoformat(e["incorporation_date"]))
+                    c.number_format = "DD.MM.YYYY"
+                    f = f"F{r}"
+                    ws.cell(r, col["Years"],
+                            f'=DATEDIF({f},TODAY(),"y")&" yrs "&DATEDIF({f},TODAY(),"ym")&" mos"')
+                ws.cell(r, col["Other details"], pairs_to_text(e.get("details")) or None)
+            ws.cell(r, col["Name of Director"], director)
+            if s:
+                ws.cell(r, col["Name of Shareholder"], s["name"])
+                for header, key, currency in (
+                    ("No. of Shares held", "shares", None),
+                    ("Face Value", "face_value", cur),
+                    ("Paid up share Capital/Contribution", "paid_up", cur),
+                ):
+                    if s[key] is not None:
+                        c = ws.cell(r, col[header], s[key])
+                        c.number_format = num_fmt(s[key], currency)
+                if s["pct"] is not None:
+                    c = ws.cell(r, col["% of Shareholding"], s["pct"] / 100)
+                    c.number_format = "0%" if float(s["pct"]).is_integer() else "0.00%"
+
+    thin = Side(style="thin", color="BFBFBF")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    for row in ws.iter_rows(min_row=1, max_row=r, max_col=len(REGISTER_HEADERS)):
+        for c in row:
+            c.border = border
+            c.alignment = Alignment(vertical="top", wrap_text=True)
+    for c in ws[1]:
+        c.font = Font(bold=True)
+        c.fill = PatternFill("solid", fgColor="FCE4D6")
+    for i, w in enumerate(_REGISTER_WIDTHS, start=1):
+        ws.column_dimensions[ws.cell(1, i).column_letter].width = w
+    ws.freeze_panes = "C2"
+    ws.auto_filter.ref = ws.dimensions
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
 COMPLIANCE_STATUS_OPTIONS = ["pending", "in_progress", "done", "not_applicable"]
 COMPLIANCE_STATUS_LABELS = {
     "pending": "Pending",
