@@ -1,6 +1,7 @@
 -- ============================================================
 -- Jira-lite schema for Supabase (Postgres)
 -- Run this once in Supabase: Dashboard -> SQL Editor -> New query -> paste -> Run
+-- The compliance tracker lives in supabase/compliance.sql (run it after this file).
 -- ============================================================
 
 create extension if not exists "pgcrypto";
