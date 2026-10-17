@@ -3,6 +3,9 @@ Supabase client + all data-access helpers used across the app.
 Every read/write in the app goes through a function in this file.
 """
 import datetime as dt
+import os
+import re
+import uuid
 from typing import Optional
 
 import streamlit as st
@@ -311,9 +314,19 @@ def update_compliance_entity(entity_id: str, **fields) -> dict:
 
 
 def delete_compliance_entity(entity_id: str) -> None:
-    """Deletes the entity and, via FK cascade, all its items and sub-items."""
+    """Deletes the entity and, via FK cascade, all its items, sub-items and
+    document rows; then removes those documents' files from storage."""
     sb = get_client()
+    item_ids = [
+        r["id"] for r in
+        sb.table("compliance_items").select("id").eq("entity_id", entity_id).execute().data
+    ]
+    paths = [
+        r["storage_path"] for r in
+        sb.table("compliance_documents").select("storage_path").eq("entity_id", entity_id).execute().data
+    ] + _document_paths_for_items(item_ids)
     sb.table("compliance_entities").delete().eq("id", entity_id).execute()
+    _remove_document_files(paths)
 
 
 def list_compliance_items() -> list:
@@ -341,9 +354,92 @@ def update_compliance_item(item_id: str, **fields) -> dict:
 
 
 def delete_compliance_item(item_id: str) -> None:
-    """Deletes the item and, via FK cascade, its sub-items."""
+    """Deletes the item and, via FK cascade, its sub-items and document rows;
+    then removes those documents' files from storage."""
     sb = get_client()
+    sub_ids = [
+        r["id"] for r in
+        sb.table("compliance_items").select("id").eq("parent_id", item_id).execute().data
+    ]
+    paths = _document_paths_for_items([item_id] + sub_ids)
     sb.table("compliance_items").delete().eq("id", item_id).execute()
+    _remove_document_files(paths)
+
+
+# ---------------------------------------------------------------
+# Compliance documents: files in the private "compliance-docs" Storage
+# bucket, one compliance_documents row per file. Attached to either an
+# item or an entity.
+# ---------------------------------------------------------------
+COMPLIANCE_DOCS_BUCKET = "compliance-docs"
+COMPLIANCE_DOC_MAX_BYTES = 50 * 1024 * 1024  # Supabase Free plan per-file limit
+
+
+def list_compliance_documents() -> list:
+    sb = get_client()
+    return sb.table("compliance_documents").select("*").order("created_at").execute().data
+
+
+def upload_compliance_document(
+    uploaded_by: str, file_name: str, data: bytes, content_type: Optional[str],
+    item_id: Optional[str] = None, entity_id: Optional[str] = None,
+) -> dict:
+    """Store the file, then record it. The storage key is a random id (the
+    original name, which may contain any characters, is kept in the row)."""
+    sb = get_client()
+    ext = os.path.splitext(file_name)[1].lower()
+    if not re.fullmatch(r"\.[a-z0-9]{1,10}", ext):
+        ext = ""
+    path = f"{item_id or entity_id}/{uuid.uuid4().hex}{ext}"
+    content_type = content_type or "application/octet-stream"
+    bucket = sb.storage.from_(COMPLIANCE_DOCS_BUCKET)
+    bucket.upload(path, data, {"content-type": content_type})
+    try:
+        res = sb.table("compliance_documents").insert({
+            "item_id": item_id, "entity_id": entity_id, "file_name": file_name,
+            "storage_path": path, "content_type": content_type, "size_bytes": len(data),
+            "uploaded_by": uploaded_by,
+        }).execute()
+    except Exception:
+        bucket.remove([path])  # don't leave an unlisted file behind
+        raise
+    return res.data[0]
+
+
+def compliance_document_url(doc: dict, expires_in: int = 3600) -> str:
+    """Short-lived download link; it stops working after `expires_in` seconds."""
+    bucket = get_client().storage.from_(COMPLIANCE_DOCS_BUCKET)
+    try:
+        # Ask for a download under the original file name.
+        res = bucket.create_signed_url(doc["storage_path"], expires_in, {"download": doc["file_name"]})
+    except TypeError:  # older storage client without the options argument
+        res = bucket.create_signed_url(doc["storage_path"], expires_in)
+    return res.get("signedURL") or res.get("signedUrl")
+
+
+def delete_compliance_document(doc: dict) -> None:
+    sb = get_client()
+    sb.table("compliance_documents").delete().eq("id", doc["id"]).execute()
+    _remove_document_files([doc["storage_path"]])
+
+
+def _document_paths_for_items(item_ids: list) -> list:
+    if not item_ids:
+        return []
+    sb = get_client()
+    rows = sb.table("compliance_documents").select("storage_path").in_("item_id", item_ids).execute().data
+    return [r["storage_path"] for r in rows]
+
+
+def _remove_document_files(paths: list) -> None:
+    """Best effort: the rows are already gone, so a failure here only leaves
+    unreachable files behind in storage."""
+    if not paths:
+        return
+    try:
+        get_client().storage.from_(COMPLIANCE_DOCS_BUCKET).remove(paths)
+    except Exception:
+        pass
 
 
 def claim_compliance_reminder(item_id: str, due_date: str) -> bool:
