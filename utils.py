@@ -152,6 +152,53 @@ def next_due_date(due: dt.date, billing_cycle: str) -> dt.date:
 ENTITY_KIND_OPTIONS = ["company", "individual"]
 ENTITY_KIND_LABELS = {"company": "Company", "individual": "Individual"}
 
+# Company register fields. Dropdowns also offer "Other…" for anything new.
+COMPANY_COUNTRY_OPTIONS = ["India", "Dubai", "Canada"]
+COMPANY_TYPE_OPTIONS = ["Pvt Ltd", "LLP", "Partnership firm", "Trust", "LLC"]
+CURRENCY_OPTIONS = ["AED", "USD", "INR", "CAD", "EUR", "GBP"]
+CURRENCY_BY_COUNTRY = {"India": "INR", "Dubai": "AED", "Canada": "CAD"}
+
+
+def years_since(d, today: dt.date | None = None) -> str:
+    """Age since a date as 'N yrs M mos' (recomputed every time, so it keeps
+    up as time passes). '' for no date."""
+    if not d:
+        return ""
+    if isinstance(d, str):
+        d = dt.date.fromisoformat(d)
+    today = today or dt.date.today()
+    months = (today.year - d.year) * 12 + (today.month - d.month) - (today.day < d.day)
+    if months < 0:
+        return ""
+    y, m = divmod(months, 12)
+    return f"{y} yr{'s' if y != 1 else ''} {m} mo{'s' if m != 1 else ''}"
+
+
+def fmt_number(n) -> str:
+    """710000 -> '710,000'; 2.5 -> '2.5'; None -> ''."""
+    if n is None or n == "":
+        return ""
+    n = float(n)
+    return f"{n:,.0f}" if n.is_integer() else f"{n:,.2f}".rstrip("0").rstrip(".")
+
+
+def shareholder_table(shareholders) -> list:
+    """Shareholders with calculated paid-up capital (shares x face value) and
+    % of shareholding (shares / total shares of the listed shareholders)."""
+    rows = [s for s in (shareholders or []) if s.get("name")]
+    total = sum(float(s.get("shares") or 0) for s in rows)
+    out = []
+    for s in rows:
+        shares, face = s.get("shares"), s.get("face_value")
+        out.append({
+            "name": s["name"],
+            "shares": shares,
+            "face_value": face,
+            "paid_up": float(shares) * float(face) if shares is not None and face is not None else None,
+            "pct": float(shares) / total * 100 if shares is not None and total else None,
+        })
+    return out
+
 COMPLIANCE_STATUS_OPTIONS = ["pending", "in_progress", "done", "not_applicable"]
 COMPLIANCE_STATUS_LABELS = {
     "pending": "Pending",
