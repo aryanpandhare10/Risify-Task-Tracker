@@ -132,14 +132,104 @@ def asset_status(asset: dict, today: dt.date = None) -> str:
     return "upcoming"
 
 
-def next_due_date(due: dt.date, billing_cycle: str) -> dt.date:
-    """Advance a due date by one billing cycle, clamping the day to the
-    target month's length (e.g. 31 Jan + 1 month -> 28/29 Feb)."""
-    months = BILLING_CYCLE_MONTHS[billing_cycle]
-    month_index = due.month - 1 + months
-    year, month = due.year + month_index // 12, month_index % 12 + 1
-    day = min(due.day, calendar.monthrange(year, month)[1])
+def add_months(d: dt.date, months: int) -> dt.date:
+    """Add calendar months, clamping the day to the target month's length
+    (e.g. 31 Jan + 1 month -> 28/29 Feb)."""
+    month_index = d.month - 1 + months
+    year, month = d.year + month_index // 12, month_index % 12 + 1
+    day = min(d.day, calendar.monthrange(year, month)[1])
     return dt.date(year, month, day)
+
+
+def next_due_date(due: dt.date, billing_cycle: str) -> dt.date:
+    """Advance a due date by one billing cycle."""
+    return add_months(due, BILLING_CYCLE_MONTHS[billing_cycle])
+
+
+# ---------------------------------------------------------------
+# Compliance tracker
+# ---------------------------------------------------------------
+ENTITY_KIND_OPTIONS = ["company", "individual"]
+ENTITY_KIND_LABELS = {"company": "Company", "individual": "Individual"}
+
+COMPLIANCE_STATUS_OPTIONS = ["pending", "in_progress", "done", "not_applicable"]
+COMPLIANCE_STATUS_LABELS = {
+    "pending": "Pending",
+    "in_progress": "In progress",
+    "done": "Done",
+    "not_applicable": "N/A",
+}
+# Items in these statuses never raise reminders.
+COMPLIANCE_CLOSED_STATUSES = {"done", "not_applicable"}
+
+# None = not set yet (Varsha fills it in). Months to roll forward on "Mark done".
+COMPLIANCE_FREQUENCY_OPTIONS = [
+    None, "one_time", "monthly", "quarterly", "half_yearly", "annually",
+    "every_2_years", "every_3_years", "every_5_years", "every_10_years",
+]
+COMPLIANCE_FREQUENCY_LABELS = {
+    None: "Not set",
+    "one_time": "One-time",
+    "monthly": "Monthly",
+    "quarterly": "Quarterly",
+    "half_yearly": "Half-yearly",
+    "annually": "Annually",
+    "every_2_years": "Every 2 years",
+    "every_3_years": "Every 3 years",
+    "every_5_years": "Every 5 years",
+    "every_10_years": "Every 10 years",
+}
+COMPLIANCE_FREQUENCY_MONTHS = {
+    "monthly": 1, "quarterly": 3, "half_yearly": 6, "annually": 12,
+    "every_2_years": 24, "every_3_years": 36, "every_5_years": 60, "every_10_years": 120,
+}
+COMPLIANCE_DEFAULT_REMINDER_DAYS = 30
+
+# Alert derived from status + due date + the item's own reminder window.
+COMPLIANCE_ALERT_COLORS = {
+    "overdue": "red",
+    "due_soon": "orange",
+    "done": "green",
+    "ok": None,
+}
+
+
+def compliance_days_left(item: dict, today: dt.date = None):
+    """Days until due, or None if the item has no due date."""
+    if not item.get("due_date"):
+        return None
+    today = today or dt.date.today()
+    return (dt.date.fromisoformat(item["due_date"]) - today).days
+
+
+def compliance_alert(item: dict, today: dt.date = None) -> str:
+    """'done' for closed items; 'overdue' past the due date; 'due_soon' inside
+    the item's reminder window; otherwise 'ok' (incl. no due date set)."""
+    if item["status"] in COMPLIANCE_CLOSED_STATUSES:
+        return "done"
+    days = compliance_days_left(item, today)
+    if days is None:
+        return "ok"
+    if days < 0:
+        return "overdue"
+    if days <= int(item.get("reminder_days") or 0):
+        return "due_soon"
+    return "ok"
+
+
+def compliance_alert_label(item: dict, today: dt.date = None) -> str:
+    alert = compliance_alert(item, today)
+    if alert == "overdue" or alert == "due_soon":
+        return due_when(compliance_days_left(item, today)).capitalize()
+    return ""
+
+
+def pairs_to_text(pairs) -> str:
+    """[{'field': 'Policy no.', 'value': 'X1'}] -> 'Policy no.: X1'."""
+    return "; ".join(
+        f"{p.get('field')}: {p.get('value')}" for p in (pairs or [])
+        if p.get("field") and str(p.get("value") or "").strip()
+    )
 
 
 def name_to_id_map(profiles: list) -> dict:
