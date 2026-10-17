@@ -9,11 +9,15 @@ import streamlit as st
 from supabase import create_client, Client
 
 
-@st.cache_resource
 def get_client() -> Client:
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_KEY"]
-    return create_client(url, key)
+    """One Supabase client per browser session. The client holds the signed-in
+    user's auth token, so it must not be shared across sessions (that would make
+    every visitor act as whoever signed in last)."""
+    if "sb_client" not in st.session_state:
+        st.session_state["sb_client"] = create_client(
+            st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"]
+        )
+    return st.session_state["sb_client"]
 
 
 # ---------------------------------------------------------------
@@ -277,6 +281,89 @@ def claim_asset_reminder(asset_id: str, due_date: str) -> bool:
 def release_asset_reminder(asset_id: str) -> None:
     """Undo a claim when the email failed to send, so it is retried later."""
     update_digital_asset(asset_id, reminder_sent_for=None)
+
+
+# ---------------------------------------------------------------
+# Compliance tracker (entities -> items -> sub-items). Only admin and
+# compliance users can read/write these tables (enforced by RLS).
+# ---------------------------------------------------------------
+def list_compliance_entities() -> list:
+    sb = get_client()
+    return (
+        sb.table("compliance_entities").select("*")
+        .order("kind").order("sort_order").order("name")
+        .execute().data
+    )
+
+
+def create_compliance_entity(kind: str, name: str, details: list, created_by: str) -> dict:
+    sb = get_client()
+    res = sb.table("compliance_entities").insert(
+        {"kind": kind, "name": name.strip(), "details": details, "created_by": created_by}
+    ).execute()
+    return res.data[0]
+
+
+def update_compliance_entity(entity_id: str, **fields) -> dict:
+    sb = get_client()
+    res = sb.table("compliance_entities").update(fields).eq("id", entity_id).execute()
+    return res.data[0]
+
+
+def delete_compliance_entity(entity_id: str) -> None:
+    """Deletes the entity and, via FK cascade, all its items and sub-items."""
+    sb = get_client()
+    sb.table("compliance_entities").delete().eq("id", entity_id).execute()
+
+
+def list_compliance_items() -> list:
+    """Every item and sub-item (flat; sub-items have parent_id set)."""
+    sb = get_client()
+    return (
+        sb.table("compliance_items").select("*")
+        .order("sort_order").order("created_at")
+        .execute().data
+    )
+
+
+def create_compliance_item(created_by: str, **fields) -> dict:
+    sb = get_client()
+    fields["created_by"] = created_by
+    res = sb.table("compliance_items").insert(fields).execute()
+    return res.data[0]
+
+
+def update_compliance_item(item_id: str, **fields) -> dict:
+    sb = get_client()
+    fields["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+    res = sb.table("compliance_items").update(fields).eq("id", item_id).execute()
+    return res.data[0]
+
+
+def delete_compliance_item(item_id: str) -> None:
+    """Deletes the item and, via FK cascade, its sub-items."""
+    sb = get_client()
+    sb.table("compliance_items").delete().eq("id", item_id).execute()
+
+
+def claim_compliance_reminder(item_id: str, due_date: str) -> bool:
+    """Atomically mark an item's reminder as sent for this due date; True only
+    for the one caller that flipped it, so sessions don't send duplicates."""
+    sb = get_client()
+    res = (
+        sb.table("compliance_items")
+        .update({"reminder_sent_for": due_date})
+        .eq("id", item_id)
+        .or_(f"reminder_sent_for.is.null,reminder_sent_for.neq.{due_date}")
+        .execute()
+    )
+    return bool(res.data)
+
+
+def release_compliance_reminder(item_id: str) -> None:
+    """Undo a claim when the email failed to send, so it is retried later."""
+    sb = get_client()
+    sb.table("compliance_items").update({"reminder_sent_for": None}).eq("id", item_id).execute()
 
 
 # ---------------------------------------------------------------
