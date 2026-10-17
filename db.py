@@ -299,10 +299,12 @@ def list_compliance_entities() -> list:
     )
 
 
-def create_compliance_entity(kind: str, name: str, details: list, created_by: str) -> dict:
+def create_compliance_entity(kind: str, name: str, details: list, created_by: str, **fields) -> dict:
+    """`fields`: optional company columns (country, entity_type,
+    business_activity, incorporation_date, currency, shareholders)."""
     sb = get_client()
     res = sb.table("compliance_entities").insert(
-        {"kind": kind, "name": name.strip(), "details": details, "created_by": created_by}
+        {"kind": kind, "name": name.strip(), "details": details, "created_by": created_by, **fields}
     ).execute()
     return res.data[0]
 
