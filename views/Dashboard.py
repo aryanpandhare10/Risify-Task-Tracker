@@ -55,11 +55,38 @@ tasks_by_project = {p["id"]: list_tasks(project_id=p["id"]) for p in projects}
 st.subheader("📋 Project overview")
 today = dt.date.today()
 
+if "proj_flash" in st.session_state:
+    st.success(st.session_state.pop("proj_flash"))
+
+
+def _is_completed(p: dict) -> bool:
+    return p.get("status") == "completed"
+
+
+def _set_project_status(p: dict, completed: bool) -> None:
+    """Button callback (admins): mark a project completed, or reopen it."""
+    update_project(
+        p["id"], status="completed" if completed else "active",
+        completed_on=today.isoformat() if completed else None,
+    )
+    st.session_state["proj_flash"] = (
+        f"Marked {p['key']} — {p['name']} as completed." if completed
+        else f"Reopened {p['key']} — {p['name']}."
+    )
+    # A new table key drops the row selection (completed projects move down).
+    st.session_state["overview_ver"] = st.session_state.get("overview_ver", 0) + 1
+
+
+# Active projects first, completed ones after (each group keeps its order).
+overview_projects = sorted(projects, key=_is_completed)
 overview_rows = []
-for p in projects:
+for p in overview_projects:
     prog = utils.project_progress(tasks_by_project[p["id"]], rollup=True)
     overview_rows.append({
         "Project": f"{p['key']} — {p['name']}",
+        "Status": (
+            f"✅ Completed {p.get('completed_on') or ''}".strip() if _is_completed(p) else "🔵 Active"
+        ),
         "Owner": id_to_name.get(p.get("lead_id"), "Unassigned"),
         "Priority": (p.get("priority") or "medium").title(),
         "Next task completion": p.get("completion_date") or "—",
@@ -70,16 +97,38 @@ for p in projects:
         "Hours completion %": round(prog["hours_pct"], 1),
     })
 
+def _completed_colors(row: pd.Series) -> list:
+    done = _is_completed(overview_projects[row.name])
+    return [f"color: {utils.TASK_CATEGORY_COLORS['completed']}" if done else ""] * len(row)
+
+
 overview_event = st.dataframe(
-    pd.DataFrame(overview_rows), use_container_width=True, hide_index=True,
-    on_select="rerun", selection_mode="single-row", key="project_overview",
+    pd.DataFrame(overview_rows).style.apply(_completed_colors, axis=1),
+    use_container_width=True, hide_index=True,
+    on_select="rerun", selection_mode="single-row",
+    key=f"project_overview_{st.session_state.get('overview_ver', 0)}",
 )
 selected_rows = overview_event.selection.rows
 
-if not selected_rows:
-    st.caption("Click a project row to see its main tasks.")
+if not selected_rows or selected_rows[0] >= len(overview_projects):
+    st.caption("Click a project row to see its main tasks"
+               + (" or mark it completed." if is_admin else "."))
 else:
-    sel = projects[selected_rows[0]]
+    sel = overview_projects[selected_rows[0]]
+    if is_admin:
+        if _is_completed(sel):
+            st.button(
+                "↩️ Reopen project", key=f"reopen_{sel['id']}",
+                on_click=_set_project_status, args=(sel, False),
+            )
+        else:
+            open_tasks = sum(1 for t in tasks_by_project[sel["id"]] if t["status"] != "done")
+            st.button(
+                "✅ Mark project completed", key=f"complete_{sel['id']}", type="primary",
+                on_click=_set_project_status, args=(sel, True),
+                help=(f"{open_tasks} task(s) are still open — they are left as they are."
+                      if open_tasks else "All tasks are done."),
+            )
     main_tasks = sorted(
         [t for t in tasks_by_project[sel["id"]] if not t.get("parent_id")],
         key=lambda t: (t.get("due_date") is None, t.get("due_date") or ""),
@@ -345,7 +394,10 @@ for p in projects:
     prog = utils.project_progress(tasks_by_project[p["id"]], rollup=True)
     with st.container(border=True):
         title_col, proj_completion_col = st.columns([3, 1])
-        title_col.markdown(f"**{p['key']}** — {p['name']}")
+        title_col.markdown(
+            f"**{p['key']}** — {p['name']}"
+            + (f" &nbsp; :green[**✅ Completed {p.get('completed_on') or ''}**]" if _is_completed(p) else "")
+        )
         proj_completion_col.markdown(
             f"<div style='text-align:right'>Project Completion Date<br>"
             f"<b>{p.get('project_completion_date') or '—'}</b></div>",
