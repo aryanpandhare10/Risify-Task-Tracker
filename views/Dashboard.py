@@ -16,22 +16,10 @@ is_admin = profile["role"] == "admin"
 
 st.title("Dashboard")
 
-# Payment reminders — any digital-asset invoice overdue or due within a week
-# is flagged here on every dashboard load, and emailed once (if SMTP is configured).
+# Payment reminders: any digital-asset invoice overdue or due within a week
+# is emailed once (if SMTP is configured). No banners here — the payment
+# tracker table below colours those rows instead.
 assets = list_digital_assets()
-for a in assets:
-    status = utils.asset_status(a)
-    if status == "upcoming":
-        continue
-    msg = (
-        f"💳 Invoice for **{utils.asset_label(a)}** "
-        f"({float(a.get('invoice_amount') or 0):,.2f}) is "
-        f"{utils.due_when(utils.asset_days_left(a))} — {a['due_date']}."
-    )
-    if status == "overdue":
-        st.error(msg)
-    else:
-        st.warning(msg)
 notify.send_payment_reminders(assets)
 
 projects = list_projects()
