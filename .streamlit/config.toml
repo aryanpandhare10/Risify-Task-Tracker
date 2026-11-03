@@ -8,5 +8,6 @@ font = "sans serif"
 
 [server]
 headless = true
-# MB; matches the compliance-docs bucket limit (Supabase Free plan maximum)
-maxUploadSize = 50
+# MB per file, for Audit uploads (Google Drive). Compliance uploads are still
+# capped at 50 MB in code (Supabase Free plan maximum).
+maxUploadSize = 200
