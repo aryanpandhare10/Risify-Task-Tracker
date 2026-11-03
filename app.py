@@ -1,7 +1,7 @@
 """
 Entry point / router. Signs the user in, then shows only the pages their role
 may use:
-  admin      -> project pages + Compliance
+  admin      -> project pages + Compliance + Audit
   member     -> project pages
   compliance -> Compliance only
 Page scripts live in views/ (not pages/, so Streamlit doesn't auto-list them).
@@ -32,11 +32,12 @@ project_pages = [
 compliance_page = st.Page(
     "views/Compliance.py", title="Compliance", icon="🛡️", default=role == "compliance",
 )
+audit_page = st.Page("views/Audit.py", title="Audit", icon="🗂️")
 
 if role == "compliance":
     nav = st.navigation([compliance_page])
 elif role == "admin":
-    nav = st.navigation({"Projects": project_pages, "Compliance": [compliance_page]})
+    nav = st.navigation({"Projects": project_pages, "Compliance": [compliance_page], "Audit": [audit_page]})
 else:
     nav = st.navigation(project_pages)
 
