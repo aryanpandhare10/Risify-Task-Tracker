@@ -3,3 +3,6 @@ venv/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Google OAuth client file used by scripts/drive_auth.py
+client_secret*.json

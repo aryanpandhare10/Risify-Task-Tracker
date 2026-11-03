@@ -1,4 +1,4 @@
-# Mustard
+# Jira-lite
 
 A lightweight, Jira-inspired project & task tracker: **Streamlit** frontend,
 **Supabase** (Postgres + Auth) backend.
@@ -37,23 +37,94 @@ Streamlit pages  --->  db.py (all Supabase calls)  --->  Supabase (Postgres + Au
 
 ```
 jira-lite/
-├── app.py                        # dashboard / entry point
+├── app.py                        # entry point: login + role-based page navigation
 ├── auth.py                       # login & sign-up (Supabase Auth)
 ├── db.py                         # every database read/write lives here
 ├── utils.py                      # shared constants (statuses, priorities, icons)
+├── notify.py                     # optional SMTP email reminders
 ├── requirements.txt
 ├── .gitignore
 ├── .streamlit/
 │   ├── config.toml               # light theme
 │   └── secrets.toml.example      # copy to secrets.toml and fill in
-├── pages/
-│   ├── 1_📁_Projects.py          # create/browse projects, tasks, sub-tasks, comments
-│   ├── 2_🗂️_Board.py             # kanban board
-│   ├── 3_✅_My_Tasks.py          # signed-in user's own tasks
-│   └── 4_📊_Reports.py           # per-user activity for a date range
+├── views/
+│   ├── Dashboard.py              # overview, payment tracker, admin analytics
+│   ├── Projects.py               # create/browse projects, tasks, sub-tasks, comments
+│   ├── Board.py                  # kanban board
+│   ├── My_Tasks.py               # signed-in user's own tasks
+│   ├── Reports.py                # per-user activity for a date range
+│   └── Compliance.py             # compliance tracker (admin + compliance roles)
 └── supabase/
-    └── schema.sql                # tables, triggers, RLS — run once in Supabase
+    ├── schema.sql                # tables, triggers, RLS — run once in Supabase
+    ├── compliance.sql            # compliance tables, role, seed data — run after schema.sql
+    ├── compliance_documents.sql  # file attachments for compliance items/entities — run after compliance.sql
+    └── compliance_entity_fields.sql # company register fields (country, type, shareholders…) — run after compliance.sql
 ```
+
+## Roles
+
+| Role | Sees |
+|---|---|
+| `admin` | All project pages + Compliance + Audit |
+| `member` | All project pages |
+| `compliance` | Compliance page only |
+
+Set a role in Supabase → Table Editor → `profiles` → `role`. Compliance data is
+also locked to `admin`/`compliance` users in the database (RLS), not just hidden
+in the UI.
+
+### Compliance documents
+
+Any compliance item or entity can have files attached (any type, up to 50 MB
+each): open it from the Tracker or Entities tab → **📎 Documents**. Files are
+stored in a **private** Supabase Storage bucket, `compliance-docs`, readable
+only by `admin`/`compliance` users; download links expire after an hour. To
+enable it, run `supabase/compliance_documents.sql` once (after `compliance.sql`).
+
+### Audit documents (admin only)
+
+The **Audit** page is a document repository: Insurance (from FY 22-23),
+Mutual Funds and PMS (from FY 24-25), one folder per financial year (April to
+March), with a new year added automatically every 1 April. Admins can add more
+categories. Files are stored in **Google Drive**, not Supabase, under
+`Risify Audit / <Category> / <FY>`, so storage is limited only by the Google
+account, and Google Drive for desktop can sync everything to a PC.
+
+One-time setup (about 10 minutes):
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com), create
+   a project (e.g. "Risify Portal").
+2. **APIs & Services → Library** → enable **Google Drive API**.
+3. **OAuth consent screen**: choose **Internal** if the account is on Google
+   Workspace (e.g. @risify.ai). If you must choose External, set the
+   publishing status to **In production** — in "Testing" Google expires the
+   connection after 7 days.
+4. **Credentials → Create credentials → OAuth client ID → Desktop app** →
+   download the JSON file.
+5. On your PC, run once and sign in with the Google account whose Drive
+   should hold the documents:
+   ```bash
+   pip install google-auth-oauthlib
+   python scripts/drive_auth.py path/to/client_secret.json
+   ```
+6. Paste the printed `[google_drive]` block at the **end** of the app's
+   secrets (Streamlit Cloud: Manage app → Settings → Secrets).
+7. Optional: install Google Drive for desktop on the PC; the **Risify Audit**
+   folder then syncs there (choose "Mirror files" to keep local copies).
+
+The app can only see files it created itself (`drive.file` permission), so
+files dropped into the Drive folder by hand won't appear in the app — upload
+through the Audit page. "Open in Drive" works for whoever has access to the
+folder; the Download button works for every admin.
+
+### Entity register
+
+The Entities tab lists companies in register format (country, type, business
+activity, incorporation date, years since incorporation, directors,
+shareholders with paid-up capital and % holding), one row per director /
+shareholder. **⬇️ Download Excel** exports it as an .xlsx whose Years column is
+a formula, so it stays current. Run `supabase/compliance_entity_fields.sql`
+once (after `compliance.sql`) to add these fields.
 
 ## 1. Set up Supabase
 
